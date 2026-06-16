@@ -4,7 +4,8 @@ import type { Pool } from 'pg';
 import {
   fetchMergedItemsByCategoryCodes,
   resolveCompanyContextForRequest,
-  resolveTenantAuthContext
+  resolveTenantAuthContext,
+  putObject
 } from '@sinapsis/module-sdk-server';
 import { reserveNextReference } from '@sinapsis/module-sdk-server';
 import path from 'path';
@@ -747,27 +748,17 @@ export default function registerClientsModule({ app, pool }: ClientsModuleContex
 
       const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
       const org = orgResult.rows[0] || { name: 'org', id: '1' };
-      const provider = org?.storageProvider || 'Local';
-      if (provider !== 'Local') {
-        return res.status(501).json({ error: `Storage provider ${provider} not fully implemented yet in the API. Please use Local for now.` });
-      }
 
       const ext = path.extname(file.originalname || '').toLowerCase();
       const baseName = customName || path.basename(file.originalname || 'file', ext) || 'file';
       const safeBaseName = baseName.replace(/[^\w\-\. ]/g, '_').trim() || 'file';
       const filename = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
 
-      const storagePath = path.resolve(process.cwd(), 'storage');
       const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + org.id.split('-')[0];
-      const relativePath = path.join(orgFolderName, 'files', sourceModule.toLowerCase(), sourceId, filename);
-      const finalPath = path.join(storagePath, relativePath);
-      const finalDir = path.dirname(finalPath);
-
-      if (!fs.existsSync(finalDir)) fs.mkdirSync(finalDir, { recursive: true });
-      fs.writeFileSync(finalPath, file.buffer);
+      const objectKey = `${orgFolderName}/files/${sourceModule.toLowerCase()}/${sourceId}/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
 
       const id = crypto.randomUUID();
-      const fileUrl = `/storage/${relativePath.replace(/\\/g, '/')}`;
 
       await pool.query(
         `
@@ -784,7 +775,7 @@ export default function registerClientsModule({ app, pool }: ClientsModuleContex
           safeBaseName,
           file.originalname || safeBaseName,
           fileUrl,
-          finalPath,
+          objectKey,
           file.mimetype || null,
           ext || null,
           Number(file.size || 0),
@@ -1290,25 +1281,15 @@ export default function registerClientsModule({ app, pool }: ClientsModuleContex
 
       const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
       const org = orgResult.rows[0] || { name: 'org', id: '1' };
-      const provider = org?.storageProvider || 'Local';
+      const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + org.id.split('-')[0];
+      const logoFilename = `client_logo_${Date.now()}${path.extname(file.originalname)}`;
 
-      let logoUrl = '';
-
-      if (provider === 'Local') {
-          const storagePath = path.resolve(process.cwd(), 'storage');
-          const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + org.id.split('-')[0];
-          const logoFilename = `client_logo_${Date.now()}${path.extname(file.originalname)}`;
-          const finalPath = path.join(storagePath, orgFolderName, 'clients', logoFilename);
-          
-          if (!fs.existsSync(path.dirname(finalPath))) {
-              fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-          }
-          
-          fs.writeFileSync(finalPath, file.buffer);
-          logoUrl = `/storage/${orgFolderName}/clients/${logoFilename}`;
-      } else {
-          return res.status(501).json({ error: `Storage provider ${provider} not fully implemented yet in the API. Please use Local for now.` });
-      }
+      const { url: logoUrl } = await putObject({
+        pool,
+        key: `${orgFolderName}/clients/${logoFilename}`,
+        buffer: file.buffer,
+        contentType: file.mimetype
+      });
 
       await pool.query('UPDATE "Client" SET "logoUrl" = $1, "updatedAt" = NOW() WHERE id = $2', [logoUrl, id]);
       

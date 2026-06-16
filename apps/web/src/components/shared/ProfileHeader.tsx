@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Camera } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface ProfileHeaderTab {
@@ -20,11 +20,17 @@ export interface ProfileHeaderProps {
   imageUrl?: string | null;
   /** Icon rendered inside the avatar box (alternative to initials). */
   icon?: React.ReactNode;
+  /** Wide banner image behind the avatar. Falls back to the gradient when absent. */
+  coverUrl?: string | null;
   meta?: ProfileHeaderMeta[];
   tabs: ProfileHeaderTab[];
   activeTab: string;
   onTabChange: (id: string) => void;
   onBack?: () => void;
+  /** When set, the avatar becomes a button with a hover overlay (e.g. to upload a logo). */
+  onLogoClick?: () => void;
+  /** When set, the banner becomes a button with a hover overlay (e.g. to upload a cover). */
+  onCoverClick?: () => void;
   /** Right-aligned actions over the name row (e.g. an Edit button). */
   actions?: React.ReactNode;
 }
@@ -39,22 +45,42 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   initials,
   imageUrl,
   icon,
+  coverUrl,
   meta = [],
   tabs,
   activeTab,
   onTabChange,
   onBack,
+  onLogoClick,
+  onCoverClick,
   actions
 }) => {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
       <div className="relative h-32 bg-gradient-to-r from-primary to-primary/75">
+        {coverUrl ? (
+          <img src={coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        ) : null}
+
+        {onCoverClick ? (
+          <button
+            type="button"
+            onClick={onCoverClick}
+            aria-label="Change cover"
+            className="group absolute inset-0 flex items-center justify-center transition-colors hover:bg-black/30"
+          >
+            <span className="flex items-center gap-2 rounded-xl bg-black/45 px-3 py-1.5 text-xs font-semibold text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+              <Camera className="size-4" /> {coverUrl ? 'Cambiar portada' : 'Subir portada'}
+            </span>
+          </button>
+        ) : null}
+
         {onBack ? (
           <button
             type="button"
             onClick={onBack}
             aria-label="Back"
-            className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur-sm transition-colors hover:bg-white/30"
+            className="absolute left-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur-sm transition-colors hover:bg-white/30"
           >
             <ArrowLeft className="size-4" />
           </button>
@@ -74,6 +100,18 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
               </span>
             )}
           </div>
+          {onLogoClick ? (
+            <button
+              type="button"
+              onClick={onLogoClick}
+              aria-label="Change logo"
+              className="group absolute inset-0 flex items-center justify-center rounded-2xl transition-colors hover:bg-black/30"
+            >
+              <span className="flex items-center justify-center rounded-full bg-black/45 p-2 text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+                <Camera className="size-4" />
+              </span>
+            </button>
+          ) : null}
         </div>
 
         <div className="mt-4 flex flex-1 items-start justify-between gap-4">

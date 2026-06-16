@@ -12,7 +12,10 @@ dotenv.config({ path: path.join(apiRoot, '.env'), override: true });
 
 const { default: app } = await import('./server');
 
-const port = Number(process.env.API_PORT ?? 14000);
+// Railway (y la mayoría de los PaaS) inyectan PORT — usarlo primero. En local
+// caemos a API_PORT (.env) o al default. Prioriza PORT para evitar mismatches
+// que devuelven 502 cuando el proxy no encuentra la app en el puerto esperado.
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 14000);
 const host = process.env.API_HOST ?? '0.0.0.0';
 
 app.listen(port, host, () => {

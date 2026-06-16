@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import { BreadcrumbBar } from './components/BreadcrumbBar';
@@ -28,8 +28,9 @@ import { CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YA
 import { getBusinessAdvice } from './services/geminiService';
 import { useTranslation } from 'react-i18next';
 import { getClientModules } from './module-registry';
-import type { ModuleClientDefinition } from '@sinapsis/module-sdk-client';
+import type { ModuleClientDefinition, ModuleRenderContext } from '@sinapsis/module-sdk-client';
 import AdminApp from './components/admin/AdminApp';
+import { buildViewRoutes, pathForView, viewForPath, type ViewRoute } from './lib/view-routes';
 
 type PublicCorePayload = {
   appName: string;
@@ -61,8 +62,8 @@ const MOCK_REVENUE = [
 ];
 
 const AUTH_STORAGE_KEY = 'sinapsis.auth.session';
-const VIEW_STORAGE_KEY = 'sinapsis.app.currentView';
 const ALL_CLIENT_MODULES: ModuleClientDefinition[] = getClientModules();
+const VIEW_ROUTES: ViewRoute[] = buildViewRoutes(ALL_CLIENT_MODULES);
 const TENANT_BLOCKED_SETTINGS_VIEWS: ViewType[] = [
   'ModuleSettings',
   'SMTPSettings',
@@ -88,16 +89,65 @@ const ViewSuspenseFallback = () => (
   <div className="text-muted-foreground flex min-h-[40vh] items-center justify-center text-sm">Loading…</div>
 );
 
-const getInitialView = (): ViewType => {
-  const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-  return (saved || 'Dashboard') as ViewType;
+interface NavBridgeRenderProps {
+  currentView: ViewType;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
+  recordId?: string;
+}
+
+/**
+ * Backs the legacy `currentView` / `setView(view)` navigation contract with the
+ * router: `currentView` is derived from the URL and `setView` navigates to the
+ * matching path. Detail params (e.g. `:id`) are surfaced as `recordId`. This lets
+ * the sidebar / header / breadcrumb / footer keep their existing props unchanged.
+ */
+const NavBridge: React.FC<{
+  routes: ViewRoute[];
+  blockedViews: ViewType[];
+  onNavigate?: () => void;
+  children: (props: NavBridgeRenderProps) => React.ReactNode;
+}> = ({ routes, blockedViews, onNavigate, children }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const matched = viewForPath(routes, location.pathname);
+  const currentView = (matched?.view ?? 'Dashboard') as ViewType;
+  const recordId = matched?.params?.id;
+
+  const setView = useCallback(
+    (view: ViewType, params?: Record<string, string>) => {
+      if (blockedViews.includes(view)) {
+        navigate('/', { replace: true });
+        return;
+      }
+      navigate(pathForView(routes, view, params) ?? '/');
+    },
+    [routes, blockedViews, navigate]
+  );
+
+  // Bounce unknown or tenant-blocked URLs back to the dashboard.
+  useEffect(() => {
+    if (location.pathname === '/') return;
+    const m = viewForPath(routes, location.pathname);
+    if (!m || blockedViews.includes(m.view)) {
+      navigate('/', { replace: true });
+    }
+  }, [location.pathname, routes, blockedViews, navigate]);
+
+  // Reset the per-view subtitle (and close the mobile sidebar) on every
+  // navigation; detail views re-set their subtitle after loading.
+  useEffect(() => {
+    onNavigate?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
+
+  return <>{children({ currentView, setView, recordId })}</>;
 };
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const { t, i18n } = useTranslation();
-  const [currentView, setView] = useState<ViewType>(getInitialView);
   const [subTitle, setSubTitle] = useState<string>('');
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('org');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -139,7 +189,7 @@ const App: React.FC = () => {
       acc[view as ViewType] = render;
     }
     return acc;
-  }, {} as Partial<Record<ViewType, (ctx: { setView: (view: ViewType) => void; currentUser?: AppUser; companyId?: string; onSubTitleChange?: (subtitle: string) => void }) => React.ReactElement>>);
+  }, {} as Partial<Record<ViewType, (ctx: ModuleRenderContext) => React.ReactElement>>);
 
   const dynamicModuleViewNames = Object.keys(dynamicModuleViews) as ViewType[];
   const dynamicBreadcrumbs = activeClientModules.reduce((acc, module) => ({ ...acc, ...(module.breadcrumbs || {}) }), {} as Record<string, { main: string; sub: string; listTarget?: string; resetEvent?: string }>);
@@ -154,6 +204,12 @@ const App: React.FC = () => {
   const applyUserLanguage = (language?: string | null) => {
     i18n.changeLanguage(resolveUserLanguage(language));
   };
+
+  // Language precedence: user's personal choice → tenant (organization) saved
+  // default → global app default. The tenant default is the language saved on
+  // the user's Organization.
+  const resolveTenantLanguage = (user?: AppUser | null) =>
+    user?.language || user?.organizationDefaultLanguage || publicCoreRef.current?.defaultLanguage || null;
 
   const resolveBrowserLanguage = () => {
     const code = String((typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en').toLowerCase();
@@ -194,8 +250,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!publicCore || !isAuthenticated || !currentUser) return;
     if (currentUser.language) return;
-    applyUserLanguage(publicCore.defaultLanguage);
-  }, [publicCore, isAuthenticated, currentUser?.id, currentUser?.language]);
+    applyUserLanguage(currentUser.organizationDefaultLanguage || publicCore.defaultLanguage);
+  }, [publicCore, isAuthenticated, currentUser?.id, currentUser?.language, currentUser?.organizationDefaultLanguage]);
 
   const headerShellStyle = useMemo(() => {
     if (!publicCore?.menuBarColor?.trim()) return undefined;
@@ -273,7 +329,7 @@ const App: React.FC = () => {
           twoStep: false
         });
         setIsAuthenticated(true);
-        applyUserLanguage(user.language || null);
+        applyUserLanguage(resolveTenantLanguage(user));
       } catch (error) {
         console.error('Error restoring auth session:', error);
         localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -372,29 +428,9 @@ const App: React.FC = () => {
       twoStep: false
     });
     setIsAuthenticated(true);
-    applyUserLanguage(user.language || publicCoreRef.current?.defaultLanguage || null);
+    applyUserLanguage(resolveTenantLanguage(user));
   };
 
-  const handleSetView = (view: ViewType) => {
-    if (TENANT_BLOCKED_SETTINGS_VIEWS.includes(view)) {
-      setView('Dashboard');
-      setSubTitle('');
-      setIsSidebarOpen(false);
-      return;
-    }
-    setView(view);
-    setSubTitle('');
-    setIsSidebarOpen(false);
-    if (isAuthenticated) {
-      localStorage.setItem(VIEW_STORAGE_KEY, view);
-    }
-  };
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      localStorage.setItem(VIEW_STORAGE_KEY, currentView);
-    }
-  }, [isAuthenticated, currentView]);
   const refreshActiveModules = () => {
     fetch('/api/modules')
       .then((res) => (res.ok ? res.json() : []))
@@ -418,28 +454,6 @@ const App: React.FC = () => {
     window.addEventListener('modulesUpdated', refreshActiveModules);
     return () => window.removeEventListener('modulesUpdated', refreshActiveModules);
   }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (TENANT_BLOCKED_SETTINGS_VIEWS.includes(currentView)) {
-      setView('Dashboard');
-      return;
-    }
-
-    if (dynamicModuleViewNames.includes(currentView)) return;
-
-    const knownStaticViews: ViewType[] = [
-      'Dashboard', 'Projects', 'Social', 'Profile', 'Tickets', 'Users',
-      'Roles', 'Subscriptions', 'FileManager', 'Inbox', 'Chat', 'Calendar',
-      'FAQ', 'Invoices', 'CreateInvoice', 'InvoiceDetail',
-      'OrganizationSettings', 'MyPlanSettings', 'CompanySettings', 'SMTPSettings', 'LanguageSettings',
-      'BackupSettings', 'PaymentSettings', 'UserSettings', 'RoleSettings',
-      'ModuleSettings', 'CategorySettings', 'ReferenceSettings', 'StorageSettings', 'MenuSettings'
-    ];
-
-    if (!knownStaticViews.includes(currentView)) {
-      setView('Dashboard');
-    }
-  }, [currentView, dynamicModuleViewNames]);
 
   const handleCurrentUserUpdate = (nextUser: AppUser) => {
     setCurrentUser((prev) => {
@@ -486,10 +500,8 @@ const App: React.FC = () => {
       console.error('Error in logout:', error);
     } finally {
       localStorage.removeItem(AUTH_STORAGE_KEY);
-      localStorage.removeItem(VIEW_STORAGE_KEY);
       setIsAuthenticated(false);
       setCurrentUser(undefined);
-      setView('Dashboard');
       setSubTitle('');
       setSelectedCompanyId('org');
       i18n.changeLanguage(resolveBrowserLanguage());
@@ -598,7 +610,11 @@ const App: React.FC = () => {
     </div>
   );
 
-  const authenticatedBody = (
+  const renderAuthenticatedBody = (
+    currentView: ViewType,
+    setView: (view: ViewType, params?: Record<string, string>) => void,
+    recordId?: string
+  ) => (
     <>
       {currentView === 'Dashboard' && renderDashboard()}
             {currentView === 'Projects' && <ProjectManagement />}
@@ -620,7 +636,8 @@ const App: React.FC = () => {
               setView,
               currentUser,
               companyId: selectedCompanyId === 'org' ? undefined : selectedCompanyId,
-              onSubTitleChange: setSubTitle
+              onSubTitleChange: setSubTitle,
+              recordId
             })}
             {currentView === 'OrganizationSettings' && <SettingsModule view="Organization" companyFilter={selectedCompanyId === 'org' ? undefined : selectedCompanyId} />}
             {currentView === 'MyPlanSettings' && <SettingsModule view="MyPlan" companyFilter={selectedCompanyId === 'org' ? undefined : selectedCompanyId} />}
@@ -668,57 +685,70 @@ const App: React.FC = () => {
             path="*"
             element={
               isAuthenticated ? (
-                <LayoutProvider>
-                  <SinapsisShell
-                    headerStyle={headerShellStyle}
-                    headerLeading={<i className="fa-solid fa-bars shrink-0 text-lg text-muted-foreground" aria-hidden />}
-                    footerAppNavigation={{
-                      setView: handleSetView,
-                      currentView,
-                      activeModuleCodes: readableModuleCodes,
-                      clientModules: ALL_CLIENT_MODULES,
-                      blockedViewKeys: TENANT_BLOCKED_SETTINGS_VIEWS
-                    }}
-                    footerAppName={displayAppName}
-                    sidebar={
-                      <Sidebar
-                        currentView={currentView}
-                        setView={handleSetView}
-                        selectedCompanyId={selectedCompanyId}
-                        onCompanyChange={setSelectedCompanyId}
-                        allowedCompanyIds={currentUser?.accessCompanyIds || []}
-                        userCompanyId={currentUser?.companyId}
-                        mobileOpen={isSidebarOpen}
-                        onMobileClose={() => setIsSidebarOpen(false)}
-                        activeModuleCodes={readableModuleCodes}
-                        clientModules={ALL_CLIENT_MODULES}
-                        sidebarBackgroundColor={publicCore?.sidebarBackgroundColor}
-                        sidebarLogoUrl={publicCore?.sidebarLogoUrl}
-                      />
-                    }
-                    header={
-                      <TopBar
-                        onLogout={handleLogout}
-                        user={currentUser}
-                        onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-                        setView={handleSetView}
-                        currentView={currentView}
-                        activeModuleCodes={readableModuleCodes}
-                        clientModules={ALL_CLIENT_MODULES}
-                      />
-                    }
-                    breadcrumb={
-                      <BreadcrumbBar
-                        currentView={currentView}
-                        subTitle={subTitle}
-                        setView={handleSetView}
-                        moduleBreadcrumbs={dynamicBreadcrumbs}
-                      />
-                    }
-                  >
-                    <Suspense fallback={<ViewSuspenseFallback />}>{authenticatedBody}</Suspense>
-                  </SinapsisShell>
-                </LayoutProvider>
+                <NavBridge
+                  routes={VIEW_ROUTES}
+                  blockedViews={TENANT_BLOCKED_SETTINGS_VIEWS}
+                  onNavigate={() => {
+                    setSubTitle('');
+                    setIsSidebarOpen(false);
+                  }}
+                >
+                  {({ currentView, setView, recordId }) => (
+                    <LayoutProvider>
+                      <SinapsisShell
+                        headerStyle={headerShellStyle}
+                        headerLeading={<i className="fa-solid fa-bars shrink-0 text-lg text-muted-foreground" aria-hidden />}
+                        footerAppNavigation={{
+                          setView,
+                          currentView,
+                          activeModuleCodes: readableModuleCodes,
+                          clientModules: ALL_CLIENT_MODULES,
+                          blockedViewKeys: TENANT_BLOCKED_SETTINGS_VIEWS
+                        }}
+                        footerAppName={displayAppName}
+                        sidebar={
+                          <Sidebar
+                            currentView={currentView}
+                            setView={setView}
+                            selectedCompanyId={selectedCompanyId}
+                            onCompanyChange={setSelectedCompanyId}
+                            allowedCompanyIds={currentUser?.accessCompanyIds || []}
+                            userCompanyId={currentUser?.companyId}
+                            mobileOpen={isSidebarOpen}
+                            onMobileClose={() => setIsSidebarOpen(false)}
+                            activeModuleCodes={readableModuleCodes}
+                            clientModules={ALL_CLIENT_MODULES}
+                            sidebarBackgroundColor={publicCore?.sidebarBackgroundColor}
+                            sidebarLogoUrl={publicCore?.sidebarLogoUrl}
+                          />
+                        }
+                        header={
+                          <TopBar
+                            onLogout={handleLogout}
+                            user={currentUser}
+                            onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                            setView={setView}
+                            currentView={currentView}
+                            activeModuleCodes={readableModuleCodes}
+                            clientModules={ALL_CLIENT_MODULES}
+                          />
+                        }
+                        breadcrumb={
+                          <BreadcrumbBar
+                            currentView={currentView}
+                            subTitle={subTitle}
+                            setView={setView}
+                            moduleBreadcrumbs={dynamicBreadcrumbs}
+                          />
+                        }
+                      >
+                        <Suspense fallback={<ViewSuspenseFallback />}>
+                          {renderAuthenticatedBody(currentView, setView, recordId)}
+                        </Suspense>
+                      </SinapsisShell>
+                    </LayoutProvider>
+                  )}
+                </NavBridge>
               ) : (
                 <AuthFlow
                   onLoginSuccess={handleLoginSuccess}

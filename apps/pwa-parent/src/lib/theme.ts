@@ -63,18 +63,40 @@ const mix = (baseHex: string, targetHex: string, amount: number) => {
 const darken = (hex: string, amount: number) => mix(hex, "#000000", amount);
 const lighten = (hex: string, amount: number) => mix(hex, "#ffffff", amount);
 
+// Relative luminance (0–1) used to decide whether a brand colour is too pale to
+// carry as the energetic accent. Near-white brand values (a common "secondary"
+// in CRM branding) would wash out every accent that references it, so we treat
+// them as "no usable accent" and keep the design's own athletic tokens instead.
+const luminance = (hex: string) => {
+  const { r, g, b } = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+};
+
 const applyThemePalette = (palette: ThemePalette) => {
   const root = document.documentElement;
+  const primary = palette.primaryColor;
 
-  root.style.setProperty("--primary", palette.primaryColor);
-  root.style.setProperty("--primary-dim", darken(palette.primaryColor, 0.14));
-  root.style.setProperty("--secondary", palette.secondaryColor);
-  root.style.setProperty("--secondary-soft", lighten(palette.secondaryColor, 0.82));
-  root.style.setProperty("--tertiary", palette.accentColor);
-  root.style.setProperty("--tertiary-soft", lighten(palette.accentColor, 0.72));
-  root.style.setProperty("--surface-high", lighten(palette.primaryColor, 0.72));
-  root.style.setProperty("--surface-highest", lighten(palette.primaryColor, 0.62));
-  root.style.setProperty("--outline", lighten(palette.primaryColor, 0.45));
+  // The brand colour only ever drives the *primary* family. Everything that
+  // needs to stay legible (accent text, data colours, surfaces) is owned by the
+  // design tokens in index.css so a pale or odd brand palette can never break
+  // contrast across the app.
+  root.style.setProperty("--primary", primary);
+  root.style.setProperty("--primary-dim", darken(primary, 0.12));
+  root.style.setProperty("--primary-strong", darken(primary, 0.3));
+  root.style.setProperty("--primary-soft", lighten(primary, 0.84));
+  root.style.setProperty("--primary-softer", lighten(primary, 0.92));
+  root.style.setProperty("--on-primary", luminance(primary) > 0.62 ? "#16323a" : "#ffffff");
+
+  // Only adopt the brand's secondary/accent as data colours when they are
+  // saturated enough to read on a light surface; otherwise leave the defaults.
+  if (luminance(palette.secondaryColor) < 0.74) {
+    root.style.setProperty("--secondary", palette.secondaryColor);
+    root.style.setProperty("--secondary-soft", lighten(palette.secondaryColor, 0.82));
+  }
+  if (luminance(palette.accentColor) < 0.74) {
+    root.style.setProperty("--tertiary", palette.accentColor);
+    root.style.setProperty("--tertiary-soft", lighten(palette.accentColor, 0.72));
+  }
 };
 
 const resolvePalette = (settings?: Pick<GlobalSettings, "primaryColor" | "secondaryColor" | "accentColor"> | null) => {

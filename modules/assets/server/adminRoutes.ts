@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
-import { assertCompanyBelongsToOrg } from '@sinapsis/module-sdk-server';
+import { assertCompanyBelongsToOrg, putObject } from '@sinapsis/module-sdk-server';
 import { reserveNextReference } from '@sinapsis/module-sdk-server';
 
 type PrismaLike = any;
@@ -229,12 +229,8 @@ export const registerModuleAdminRoutes = (
       const safeBase = baseName.replace(/[^\w\-\. ]/g, '_').trim() || 'file';
       const filename = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
       const orgFolder = orgStorageFolder(org);
-      const relativePath = path.join(orgFolder, 'files', 'asset-products', productId, filename);
-      const storageRoot = path.resolve(process.cwd(), 'storage');
-      const finalPath = path.join(storageRoot, relativePath);
-      fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-      fs.writeFileSync(finalPath, file.buffer);
-      const fileUrl = `/storage/${relativePath.replace(/\\/g, '/')}`;
+      const objectKey = `${orgFolder}/files/asset-products/${productId}/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
 
       const id = crypto.randomUUID();
       const kind = norm(req.body?.kind, 'manual') || 'manual';
@@ -252,7 +248,7 @@ export const registerModuleAdminRoutes = (
           safeBase,
           file.originalname || safeBase,
           fileUrl,
-          finalPath,
+          objectKey,
           file.mimetype || null,
           ext || null,
           Number(file.size || 0),

@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pwa-parent",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@sinapsis/pwa-parent", "run", "dev"],
+      "port": 13510,
+      "autoPort": true
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@sinapsis/web", "run", "dev"],
+      "port": 13509,
+      "autoPort": true
+    }
+  ]
+}

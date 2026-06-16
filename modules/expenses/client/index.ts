@@ -13,6 +13,11 @@ const moduleDefinition: ModuleClientDefinition = {
     RecurringExpenses: ({ setView, currentUser, companyId }) => React.createElement(ExpenseModule, { view: 'recurring', setView, currentUser, companyId }),
     ExchangeRates: ({ setView, currentUser, companyId }) => React.createElement(ExpenseModule, { view: 'rates', setView, currentUser, companyId })
   },
+  routes: [
+    { view: 'Expenses', path: 'expenses' },
+    { view: 'RecurringExpenses', path: 'expenses/recurring' },
+    { view: 'ExchangeRates', path: 'expenses/rates' }
+  ],
   sidebarSections: [
     {
       label: 'Expenses',

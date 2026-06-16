@@ -12,9 +12,13 @@ const moduleDefinition: ModuleClientDefinition = {
   views: {
     Communities: ({ setView, currentUser, companyId, onSubTitleChange }) =>
       React.createElement(CommunityModule, { view: 'list', setView, currentUser, companyId, onSubTitleChange }),
-    CommunityDetails: ({ setView, currentUser, companyId, onSubTitleChange }) =>
-      React.createElement(CommunityModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange })
+    CommunityDetails: ({ setView, currentUser, companyId, onSubTitleChange, recordId }) =>
+      React.createElement(CommunityModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange, recordId })
   },
+  routes: [
+    { view: 'Communities', path: 'communities' },
+    { view: 'CommunityDetails', path: 'communities/:id' }
+  ],
   sidebarSections: [
     {
       label: 'communities.title',

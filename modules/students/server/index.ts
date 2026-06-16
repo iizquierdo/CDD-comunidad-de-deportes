@@ -509,6 +509,96 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
     }
   });
 
+  // ---- Student disciplines (ABM from the student record) --------------------
+  router.post('/:id/disciplines', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can manage disciplines.' });
+      const studentId = req.params.id;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      const disciplineId = String(req.body?.disciplineId || '').trim();
+      if (!disciplineId) return res.status(400).json({ error: 'disciplineId is required.' });
+      await pool.query(
+        `INSERT INTO "StudentDiscipline" (id, "studentId", "disciplineId", "levelId", status, "startDate", "endDate", "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         ON CONFLICT ("studentId", "disciplineId") DO UPDATE SET "levelId" = EXCLUDED."levelId", status = EXCLUDED.status, "updatedAt" = NOW()`,
+        [crypto.randomUUID(), studentId, disciplineId, String(req.body?.levelId || '').trim() || null, String(req.body?.status || 'ACTIVE').trim() || 'ACTIVE', req.body?.startDate ? new Date(req.body.startDate) : null, req.body?.endDate ? new Date(req.body.endDate) : null]
+      );
+      res.status(201).json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to add discipline', details: error.message });
+    }
+  });
+
+  router.put('/:id/disciplines/:disciplineId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can manage disciplines.' });
+      const { id: studentId, disciplineId } = req.params;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      const r = await pool.query(
+        `UPDATE "StudentDiscipline" SET "levelId" = $1, status = $2, "updatedAt" = NOW() WHERE "studentId" = $3 AND "disciplineId" = $4`,
+        [String(req.body?.levelId || '').trim() || null, String(req.body?.status || 'ACTIVE').trim() || 'ACTIVE', studentId, disciplineId]
+      );
+      if (!r.rowCount) return res.status(404).json({ error: 'Enrollment not found.' });
+      res.json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to update discipline', details: error.message });
+    }
+  });
+
+  router.delete('/:id/disciplines/:disciplineId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can manage disciplines.' });
+      const { id: studentId, disciplineId } = req.params;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      await pool.query('DELETE FROM "StudentDiscipline" WHERE "studentId" = $1 AND "disciplineId" = $2', [studentId, disciplineId]);
+      res.json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to remove discipline', details: error.message });
+    }
+  });
+
+  // ---- Student tutors / padres (ABM from the student record) ----------------
+  router.post('/:id/tutors', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can manage parents.' });
+      const studentId = req.params.id;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      const tutorId = String(req.body?.tutorId || '').trim();
+      if (!tutorId) return res.status(400).json({ error: 'tutorId is required.' });
+      const exists = await pool.query('SELECT 1 FROM "User" WHERE id = $1 LIMIT 1', [tutorId]);
+      if (!exists.rows[0]) return res.status(404).json({ error: 'Parent not found.' });
+      await pool.query(
+        'INSERT INTO "StudentTutor" (id, "studentId", "tutorId", active, "assignedAt") VALUES ($1, $2, $3, true, NOW()) ON CONFLICT ("studentId", "tutorId") DO UPDATE SET active = true',
+        [crypto.randomUUID(), studentId, tutorId]
+      );
+      res.status(201).json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to add parent', details: error.message });
+    }
+  });
+
+  router.delete('/:id/tutors/:tutorId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can manage parents.' });
+      const { id: studentId, tutorId } = req.params;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      await pool.query('DELETE FROM "StudentTutor" WHERE "studentId" = $1 AND "tutorId" = $2', [studentId, tutorId]);
+      res.json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to remove parent', details: error.message });
+    }
+  });
+
   // ---- Single student (after sub-resource literals) -------------------------
   router.get('/:id', async (req, res) => {
     try {

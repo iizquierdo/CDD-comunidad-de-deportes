@@ -8,7 +8,7 @@ import {
   getSortedRowModel,
   useReactTable
 } from '@tanstack/react-table';
-import { Building2, Eye, IdCard, Mail, Pencil, Power, PowerOff } from 'lucide-react';
+import { Building2, Eye, IdCard, Mail, Pencil, Power, PowerOff, Trash2 } from 'lucide-react';
 import { Button } from '@webapp/components/ui/button';
 import { DataGridColumnHeader } from '@webapp/components/ui/data-grid-column-header';
 import { cn } from '@webapp/lib/utils';
@@ -19,10 +19,11 @@ type StudentView = 'list' | 'details';
 
 interface Props {
   view: StudentView;
-  setView: (view: ViewType) => void;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
   currentUser?: AppUser;
   companyId?: string;
   onSubTitleChange?: (subtitle: string) => void;
+  recordId?: string;
 }
 
 interface MetaItem { id: string; name: string }
@@ -37,14 +38,16 @@ interface StudentRow {
 }
 
 interface Enrollment { id: string; disciplineId: string; levelId?: string | null; status: string }
-interface Assignment { id: string; teacherId?: string; tutorId?: string; teacherName?: string; tutorName?: string }
+interface Assignment { id: string; teacherId?: string; tutorId?: string; teacherName?: string; tutorName?: string; tutorEmail?: string }
+interface ParentItem { id: string; name?: string | null; firstName?: string | null; lastName?: string | null; email: string }
 interface ReportItem { id: string; type: string; title: string; content?: string | null; summary?: string | null; visibility: string; status: string; authorName?: string; createdAt: string }
 interface ConversationItem { id: string; subject?: string | null; status: string; createdByName?: string; messageCount?: number; updatedAt: string }
 interface MessageItem { id: string; senderId: string; senderName?: string; body: string; createdAt: string }
 
-const SELECTED_KEY = 'sinapsis.students.selected';
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100';
 const labelize = (raw: string) => String(raw || '').toLowerCase().split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+const ENROLL_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'];
+const emptyParentForm = { firstName: '', lastName: '', email: '', phone: '', document: '', password: '', companyId: '' };
 
 const emptyForm = {
   firstName: '', lastName: '', document: '', birthDate: '', gender: '', email: '', phone: '', address: '',
@@ -54,7 +57,7 @@ const emptyForm = {
   teacherIds: [] as string[], tutorIds: [] as string[]
 };
 
-const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId, onSubTitleChange }) => {
+const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId, onSubTitleChange, recordId }) => {
   const { t } = useTranslation();
   const userId = currentUser?.id || '';
 
@@ -83,8 +86,22 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
   const [openConv, setOpenConv] = useState<{ id: string; subject?: string | null; messages: MessageItem[] } | null>(null);
   const [draft, setDraft] = useState('');
 
+  // ABM disciplinas (en el tab)
+  const [discModalOpen, setDiscModalOpen] = useState(false);
+  const [discForm, setDiscForm] = useState({ disciplineId: '', levelId: '', status: 'ACTIVE', editing: false });
+
+  // ABM padres (tutores vinculados al alumno)
+  const [parentsList, setParentsList] = useState<ParentItem[]>([]);
+  const [parentModalOpen, setParentModalOpen] = useState(false);
+  const [parentPick, setParentPick] = useState('');
+  const [parentCreateOpen, setParentCreateOpen] = useState(false);
+  const [parentForm, setParentForm] = useState({ ...emptyParentForm });
+
   const disciplineName = (id: string) => meta.disciplines.find((d) => d.id === id)?.name || id;
   const levelName = (did: string, lid?: string | null) => meta.disciplines.find((d) => d.id === did)?.levels.find((l) => l.id === lid)?.name || '';
+  const genderLabel = (x: string) => t(`students.gender_${x}`, { defaultValue: labelize(x) });
+  const enrollLabel = (x: string) => t(`students.enroll_${x}`, { defaultValue: labelize(x) });
+  const parentLabel = (p: ParentItem) => `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.name || p.email;
 
   const loadStudents = async () => {
     setLoading(true); setError('');
@@ -119,22 +136,24 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
       const data = await res.json();
       setSelected(data);
       onSubTitleChange?.(`${data.firstName} ${data.lastName}`);
-      const [rep, conv] = await Promise.all([
+      const [rep, conv, par] = await Promise.all([
         fetch(`/api/students/${id}/reports`).then((r) => (r.ok ? r.json() : [])),
-        fetch(`/api/students/${id}/conversations`).then((r) => (r.ok ? r.json() : []))
+        fetch(`/api/students/${id}/conversations`).then((r) => (r.ok ? r.json() : [])),
+        fetch('/api/parents').then((r) => (r.ok ? r.json() : []))
       ]);
-      setReports(rep); setConversations(conv);
+      setReports(rep); setConversations(conv); setParentsList(par);
     } catch { setError(t('students.errorLoad')); }
   };
 
   useEffect(() => { void loadMeta(); }, []);
   useEffect(() => {
     if (view === 'list') { void loadStudents(); setSelected(null); setOpenConv(null); }
-    else { const id = localStorage.getItem(SELECTED_KEY); if (id) void loadDetails(id); else setView('Students'); }
+    else if (recordId) { void loadDetails(recordId); }
+    else { setView('Students'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, companyId]);
+  }, [view, companyId, recordId]);
 
-  const openDetails = (s: StudentRow) => { localStorage.setItem(SELECTED_KEY, s.id); setActiveTab('Overview'); setView('StudentDetails'); };
+  const openDetails = (s: StudentRow) => { setActiveTab('Overview'); setView('StudentDetails', { id: s.id }); };
 
   const openCreate = () => {
     setEditingId(null);
@@ -214,6 +233,71 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
     if (!openConv || !draft.trim()) return;
     const res = await fetch(`/api/students/conversations/${openConv.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft.trim() }) });
     if (res.ok) { const msg = await res.json(); setOpenConv({ ...openConv, messages: [...openConv.messages, msg] }); setDraft(''); }
+  };
+
+  // ---- ABM disciplinas (tab) ------------------------------------------------
+  const openAddDiscipline = () => { setError(''); setDiscForm({ disciplineId: '', levelId: '', status: 'ACTIVE', editing: false }); setDiscModalOpen(true); };
+  const openEditDiscipline = (d: Enrollment) => { setError(''); setDiscForm({ disciplineId: d.disciplineId, levelId: d.levelId || '', status: d.status || 'ACTIVE', editing: true }); setDiscModalOpen(true); };
+
+  const submitDiscipline = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected || !discForm.disciplineId) return;
+    try {
+      const url = discForm.editing
+        ? `/api/students/${selected.id}/disciplines/${discForm.disciplineId}`
+        : `/api/students/${selected.id}/disciplines`;
+      const res = await fetch(url, {
+        method: discForm.editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disciplineId: discForm.disciplineId, levelId: discForm.levelId, status: discForm.status })
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setSelected(await res.json());
+      setDiscModalOpen(false);
+    } catch (err: any) { setError(err.message || t('students.errorSave')); }
+  };
+
+  const removeDiscipline = async (d: Enrollment) => {
+    if (!selected) return;
+    if (!window.confirm(t('students.removeDisciplineConfirm', { name: disciplineName(d.disciplineId) }))) return;
+    try {
+      const res = await fetch(`/api/students/${selected.id}/disciplines/${d.disciplineId}`, { method: 'DELETE' });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setSelected(await res.json());
+    } catch (err: any) { setError(err.message || t('students.errorSave')); }
+  };
+
+  // ---- ABM padres (tab) -----------------------------------------------------
+  const openAddParent = () => { setError(''); setParentPick(''); setParentCreateOpen(false); setParentForm({ ...emptyParentForm, companyId: selected?.companyId || companyId || '' }); setParentModalOpen(true); };
+
+  const submitParent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected) return;
+    try {
+      let tutorId = parentPick;
+      if (parentCreateOpen) {
+        if (!parentForm.firstName.trim() || !parentForm.lastName.trim() || !parentForm.email.trim() || !parentForm.password) return setError(t('students.parentFormIncomplete'));
+        const cRes = await fetch('/api/parents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...parentForm, companyId: parentForm.companyId || selected.companyId }) });
+        if (!cRes.ok) { const b = await cRes.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+        tutorId = (await cRes.json()).id;
+      }
+      if (!tutorId) return;
+      const res = await fetch(`/api/students/${selected.id}/tutors`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tutorId }) });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setSelected(await res.json());
+      setParentModalOpen(false);
+      void fetch('/api/parents').then((r) => (r.ok ? r.json() : [])).then(setParentsList);
+    } catch (err: any) { setError(err.message || t('students.errorSave')); }
+  };
+
+  const removeParent = async (x: Assignment) => {
+    if (!selected || !x.tutorId) return;
+    if (!window.confirm(t('students.removeParentConfirm', { name: x.tutorName || '' }))) return;
+    try {
+      const res = await fetch(`/api/students/${selected.id}/tutors/${x.tutorId}`, { method: 'DELETE' });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setSelected(await res.json());
+    } catch (err: any) { setError(err.message || t('students.errorSave')); }
   };
 
   const genderOptions = useMemo(() => (meta.genders.length ? meta.genders.map((x) => x.name) : ['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'UNSPECIFIED']), [meta.genders]);
@@ -338,6 +422,9 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
   // ---------------------------------------------------------------- details --
   if (view === 'details') {
+    const linkedTutorIds = new Set((selected?.tutors || []).map((x: Assignment) => x.tutorId));
+    const availableParents = parentsList.filter((p) => !linkedTutorIds.has(p.id));
+    const discLevels = meta.disciplines.find((d) => d.id === discForm.disciplineId)?.levels || [];
     return (
       <div className="space-y-6 animate-in fade-in duration-300 pb-10">
         {error && <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</div>}
@@ -354,7 +441,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
           tabs={[
             { id: 'Overview', label: t('students.overview') },
             { id: 'Disciplines', label: t('students.disciplines') },
-            { id: 'Staff', label: t('students.staff') },
+            { id: 'Staff', label: t('students.parents') },
             { id: 'Reports', label: t('students.reports') },
             { id: 'Conversations', label: t('students.conversations') }
           ]}
@@ -372,7 +459,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
         {activeTab === 'Overview' && selected && (
           <div className="grid gap-4 px-1 sm:grid-cols-2 lg:grid-cols-3">
             <Info label={t('students.document')} value={selected.document} />
-            <Info label={t('students.gender')} value={selected.gender ? labelize(selected.gender) : null} />
+            <Info label={t('students.gender')} value={selected.gender ? genderLabel(selected.gender) : null} />
             <Info label={t('students.birthDate')} value={selected.birthDate ? String(selected.birthDate).slice(0, 10) : null} />
             <Info label={t('students.email')} value={selected.email} />
             <Info label={t('students.phone')} value={selected.phone} />
@@ -386,12 +473,19 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
         {activeTab === 'Disciplines' && selected && (
           <div className="px-1">
+            <div className="mb-4 flex justify-end"><button onClick={openAddDiscipline} className={primaryBtn}><i className="fa-solid fa-plus" /> {t('students.addDiscipline')}</button></div>
             {(selected.disciplines || []).length === 0 ? <Empty text={t('students.none')} /> : (
               <div className="grid gap-2 sm:grid-cols-2">
                 {(selected.disciplines as Enrollment[]).map((d) => (
-                  <div key={d.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                    <p className="text-sm font-semibold text-slate-900">{disciplineName(d.disciplineId)}</p>
-                    <p className="text-xs text-slate-500">{levelName(d.disciplineId, d.levelId) || '—'} · {labelize(d.status)}</p>
+                  <div key={d.id} className="flex items-start justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">{disciplineName(d.disciplineId)}</p>
+                      <p className="text-xs text-slate-500">{levelName(d.disciplineId, d.levelId) || '—'} · {enrollLabel(d.status)}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button type="button" mode="icon" size="sm" variant="outline" className="size-8" onClick={() => openEditDiscipline(d)} aria-label={t('students.editDiscipline')}><Pencil className="size-3.5" /></Button>
+                      <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 text-destructive hover:bg-destructive/10" onClick={() => removeDiscipline(d)} aria-label={t('students.cancel')}><Trash2 className="size-3.5" /></Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -400,19 +494,20 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
         )}
 
         {activeTab === 'Staff' && selected && (
-          <div className="grid gap-6 px-1 sm:grid-cols-2">
-            <div>
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">{t('students.teachers')}</h3>
-              {(selected.teachers || []).length === 0 ? <Empty text={t('students.none')} /> : (selected.teachers as Assignment[]).map((x) => (
-                <div key={x.id} className="mb-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">{x.teacherName}</div>
-              ))}
+          <div className="px-1">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('students.parents')}</h3>
+              <button onClick={openAddParent} className={primaryBtn}><i className="fa-solid fa-plus" /> {t('students.addParent')}</button>
             </div>
-            <div>
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">{t('students.tutors')}</h3>
-              {(selected.tutors || []).length === 0 ? <Empty text={t('students.none')} /> : (selected.tutors as Assignment[]).map((x) => (
-                <div key={x.id} className="mb-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">{x.tutorName}</div>
-              ))}
-            </div>
+            {(selected.tutors || []).length === 0 ? <Empty text={t('students.none')} /> : (selected.tutors as Assignment[]).map((x) => (
+              <div key={x.id} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">{x.tutorName}</p>
+                  {x.tutorEmail && <p className="text-xs text-slate-400">{x.tutorEmail}</p>}
+                </div>
+                <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 shrink-0 text-destructive hover:bg-destructive/10" onClick={() => removeParent(x)} aria-label={t('students.cancel')}><Trash2 className="size-3.5" /></Button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -482,7 +577,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
         </div>
 
-        {studentModalOpen && <StudentForm />}
+        {studentModalOpen && StudentForm()}
         {reportModalOpen && (
           <Modal title={t('students.newReport')} onClose={() => setReportModalOpen(false)}>
             <form onSubmit={submitReport} className="space-y-4">
@@ -507,6 +602,64 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
             </form>
           </Modal>
         )}
+        {discModalOpen && (
+          <Modal title={discForm.editing ? t('students.editDiscipline') : t('students.addDiscipline')} onClose={() => setDiscModalOpen(false)}>
+            <form onSubmit={submitDiscipline} className="space-y-4">
+              <Field label={t('students.discipline')}>
+                <select className={inputClass} value={discForm.disciplineId} disabled={discForm.editing} onChange={(e) => setDiscForm({ ...discForm, disciplineId: e.target.value, levelId: '' })} required>
+                  <option value="">—</option>
+                  {meta.disciplines.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </Field>
+              <Field label={t('students.level')}>
+                <select className={inputClass} value={discForm.levelId} onChange={(e) => setDiscForm({ ...discForm, levelId: e.target.value })}>
+                  <option value="">—</option>
+                  {discLevels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </Field>
+              <Field label={t('students.status')}>
+                <select className={inputClass} value={discForm.status} onChange={(e) => setDiscForm({ ...discForm, status: e.target.value })}>
+                  {ENROLL_STATUSES.map((s) => <option key={s} value={s}>{enrollLabel(s)}</option>)}
+                </select>
+              </Field>
+              <ModalActions onCancel={() => setDiscModalOpen(false)} cancel={t('students.cancel')} save={t('students.save')} />
+            </form>
+          </Modal>
+        )}
+        {parentModalOpen && (
+          <Modal title={t('students.addParent')} onClose={() => setParentModalOpen(false)}>
+            <form onSubmit={submitParent} className="space-y-4">
+              {!parentCreateOpen && (
+                <Field label={t('students.selectParent')}>
+                  <select className={inputClass} value={parentPick} onChange={(e) => setParentPick(e.target.value)}>
+                    <option value="">—</option>
+                    {availableParents.map((p) => <option key={p.id} value={p.id}>{parentLabel(p)}{p.email ? ` · ${p.email}` : ''}</option>)}
+                  </select>
+                </Field>
+              )}
+              <button type="button" onClick={() => setParentCreateOpen(!parentCreateOpen)} className="text-xs font-bold text-red-500">
+                {parentCreateOpen ? t('students.pickExistingParent') : t('students.createNewParent')}
+              </button>
+              {parentCreateOpen && (
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
+                  <Field label={t('students.firstName')}><input className={inputClass} value={parentForm.firstName} onChange={(e) => setParentForm({ ...parentForm, firstName: e.target.value })} /></Field>
+                  <Field label={t('students.lastName')}><input className={inputClass} value={parentForm.lastName} onChange={(e) => setParentForm({ ...parentForm, lastName: e.target.value })} /></Field>
+                  <Field label={t('students.email')}><input type="email" className={inputClass} value={parentForm.email} onChange={(e) => setParentForm({ ...parentForm, email: e.target.value })} /></Field>
+                  <Field label={t('students.phone')}><input className={inputClass} value={parentForm.phone} onChange={(e) => setParentForm({ ...parentForm, phone: e.target.value })} /></Field>
+                  <Field label={t('students.document')}><input className={inputClass} value={parentForm.document} onChange={(e) => setParentForm({ ...parentForm, document: e.target.value })} /></Field>
+                  <Field label={t('students.password')}><input type="password" className={inputClass} value={parentForm.password} onChange={(e) => setParentForm({ ...parentForm, password: e.target.value })} /></Field>
+                  <div className="col-span-2"><Field label={t('students.sede')}>
+                    <select className={inputClass} value={parentForm.companyId} onChange={(e) => setParentForm({ ...parentForm, companyId: e.target.value })}>
+                      <option value="">—</option>
+                      {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </Field></div>
+                </div>
+              )}
+              <ModalActions onCancel={() => setParentModalOpen(false)} cancel={t('students.cancel')} save={t('students.save')} />
+            </form>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -521,15 +674,13 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
             <Field label={t('students.lastName')}><input className={inputClass} value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} required /></Field>
             <Field label={t('students.document')}><input className={inputClass} value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} /></Field>
             <Field label={t('students.birthDate')}><input type="date" className={inputClass} value={form.birthDate} onChange={(e) => setForm({ ...form, birthDate: e.target.value })} /></Field>
-            <Field label={t('students.gender')}><select className={inputClass} value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}><option value="">—</option>{genderOptions.map((x) => <option key={x} value={x}>{labelize(x)}</option>)}</select></Field>
+            <Field label={t('students.gender')}><select className={inputClass} value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}><option value="">—</option>{genderOptions.map((x) => <option key={x} value={x}>{genderLabel(x)}</option>)}</select></Field>
             <Field label={t('students.sede')}><select className={inputClass} value={form.companyId} onChange={(e) => setForm({ ...form, companyId: e.target.value })} required><option value="">—</option>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
             <Field label={t('students.email')}><input className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
             <Field label={t('students.phone')}><input className={inputClass} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
           </div>
           <Field label={t('students.address')}><input className={inputClass} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`${t('students.guardian')} — ${t('students.contactName')}`}><input className={inputClass} value={form.guardianName} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} /></Field>
-            <Field label={`${t('students.guardian')} — ${t('students.contactPhone')}`}><input className={inputClass} value={form.guardianPhone} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} /></Field>
             <Field label={`${t('students.emergency')} — ${t('students.contactName')}`}><input className={inputClass} value={form.emergencyContactName} onChange={(e) => setForm({ ...form, emergencyContactName: e.target.value })} /></Field>
             <Field label={`${t('students.emergency')} — ${t('students.contactPhone')}`}><input className={inputClass} value={form.emergencyContactPhone} onChange={(e) => setForm({ ...form, emergencyContactPhone: e.target.value })} /></Field>
           </div>
@@ -559,11 +710,12 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
             })}
           </div>
 
-          {/* Teachers / Tutors */}
-          <div className="grid grid-cols-2 gap-3">
-            <MultiSelect label={t('students.selectTeachers')} options={meta.staff} selected={form.teacherIds} onToggle={(id) => setForm({ ...form, teacherIds: toggleInArray(form.teacherIds, id) })} />
-            <MultiSelect label={t('students.selectTutors')} options={meta.staff} selected={form.tutorIds} onToggle={(id) => setForm({ ...form, tutorIds: toggleInArray(form.tutorIds, id) })} />
-          </div>
+          {/* Tutors — assigned only when editing an existing student (from the student view) */}
+          {editingId && (
+            <div className="grid grid-cols-2 gap-3">
+              <MultiSelect label={t('students.selectTutors')} options={meta.staff} selected={form.tutorIds} onToggle={(id) => setForm({ ...form, tutorIds: toggleInArray(form.tutorIds, id) })} />
+            </div>
+          )}
 
           <ModalActions onCancel={() => setStudentModalOpen(false)} cancel={t('students.cancel')} save={t('students.save')} />
         </form>
@@ -591,7 +743,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
         onRowClick={(s) => openDetails(s)}
       />
 
-      {studentModalOpen && <StudentForm />}
+      {studentModalOpen && StudentForm()}
     </>
   );
 };

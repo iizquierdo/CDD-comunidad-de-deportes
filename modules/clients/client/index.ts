@@ -14,8 +14,15 @@ const moduleDefinition: ModuleClientDefinition = {
     ClientLeads: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(ClientModule, { view: 'leads', setView, currentUser, companyId, onSubTitleChange }),
     ClientActive: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(ClientModule, { view: 'active', setView, currentUser, companyId, onSubTitleChange }),
     ClientInactive: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(ClientModule, { view: 'inactive', setView, currentUser, companyId, onSubTitleChange }),
-    ClientDetails: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(ClientModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange })
+    ClientDetails: ({ setView, currentUser, companyId, onSubTitleChange, recordId }) => React.createElement(ClientModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange, recordId })
   },
+  routes: [
+    { view: 'Clients', path: 'clients' },
+    { view: 'ClientLeads', path: 'clients/leads' },
+    { view: 'ClientActive', path: 'clients/active' },
+    { view: 'ClientInactive', path: 'clients/inactive' },
+    { view: 'ClientDetails', path: 'clients/:id' }
+  ],
   sidebarSections: [
     {
       label: 'clients.title',

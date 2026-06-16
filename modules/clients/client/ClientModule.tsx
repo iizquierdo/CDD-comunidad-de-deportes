@@ -7,10 +7,11 @@ type ClientView = 'all' | 'leads' | 'active' | 'inactive' | 'details';
 
 interface ClientModuleProps {
   view: ClientView;
-  setView: (view: ViewType) => void;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
   currentUser?: AppUser;
   companyId?: string;
   onSubTitleChange?: (subtitle: string) => void;
+  recordId?: string;
 }
 
 interface MetaItem {
@@ -72,7 +73,6 @@ interface NoteItem {
   updatedAt: string;
 }
 
-const SELECTED_CLIENT_KEY = 'sinapsis.clients.selected';
 const DEFAULT_TYPES = ['Customer', 'Supplier', 'Partner', 'Prospect'];
 const DEFAULT_STATUSES = ['Lead', 'Active', 'Inactive'];
 
@@ -134,7 +134,7 @@ const FORCED_STATUS_BY_VIEW: Record<Exclude<ClientView, 'details'>, string | nul
   inactive: 'Inactive'
 };
 
-const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser, companyId, onSubTitleChange }) => {
+const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser, companyId, onSubTitleChange, recordId }) => {
   const { t } = useTranslation();
   const forcedStatus = view === 'details' ? null : FORCED_STATUS_BY_VIEW[view];
 
@@ -339,7 +339,7 @@ const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser,
       setClients(data || []);
 
       if (view === 'details') {
-        const selectedId = localStorage.getItem(SELECTED_CLIENT_KEY);
+        const selectedId = recordId;
         if (!selectedId) {
           setSelectedClient(null);
         } else {
@@ -413,7 +413,7 @@ const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser,
 
   useEffect(() => {
     loadClients();
-  }, [companyId, view, forcedStatus, statusFilter, typeFilter, search]);
+  }, [companyId, view, forcedStatus, statusFilter, typeFilter, search, recordId]);
 
   useEffect(() => {
     if (view !== 'details' || !selectedClient?.id) {
@@ -531,7 +531,6 @@ const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser,
       await loadClients();
 
       if (view === 'details') {
-        localStorage.setItem(SELECTED_CLIENT_KEY, saved.id);
         setSelectedClient(saved);
       }
     } catch (e: any) {
@@ -555,7 +554,6 @@ const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser,
       }
 
       if (selectedClient?.id === id) {
-        localStorage.removeItem(SELECTED_CLIENT_KEY);
         setSelectedClient(null);
         setView('Clients');
       }
@@ -589,20 +587,9 @@ const ClientModule: React.FC<ClientModuleProps> = ({ view, setView, currentUser,
     }
   };
 
-  const showDetails = async (id: string) => {
-    try {
-      localStorage.setItem(SELECTED_CLIENT_KEY, id);
-      const res = await fetch(`/api/clients/${id}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || t('clients.errorLoadDetails'));
-      }
-      setSelectedClient(await res.json());
-      setActiveTab('Overview');
-      setView('ClientDetails');
-    } catch (e: any) {
-      setError(e.message || t('clients.errorLoadDetails'));
-    }
+  const showDetails = (id: string) => {
+    setActiveTab('Overview');
+    setView('ClientDetails', { id });
   };
 
   const resetSocialForm = () => {

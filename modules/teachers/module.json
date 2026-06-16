@@ -1,0 +1,17 @@
+{
+    "name": "Teachers",
+    "code": "TEACHERS",
+    "version": "1.0.0",
+    "description": "Profesores: ABM de los profesores (cuentas con rol Profesor)",
+    "entry": {
+        "api": "modules/teachers/server/index.ts",
+        "ui": "modules/teachers/client/TeachersModule.tsx",
+        "admin": "modules/teachers/server/adminRoutes.ts"
+    },
+    "migrations": [
+        "migrations/001_init_teachers.sql"
+    ],
+    "api": {
+        "basePath": "/api/teachers"
+    }
+}

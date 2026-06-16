@@ -12,8 +12,14 @@ const moduleDefinition: ModuleClientDefinition = {
     Tasks: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(TaskModule, { view: 'list', setView, currentUser, companyId, onSubTitleChange }),
     TaskCalendar: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(TaskModule, { view: 'calendar', setView, currentUser, companyId, onSubTitleChange }),
     Kanban: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(TaskModule, { view: 'kanban', setView, currentUser, companyId, onSubTitleChange }),
-    TaskDetails: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(TaskModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange })
+    TaskDetails: ({ setView, currentUser, companyId, onSubTitleChange, recordId }) => React.createElement(TaskModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange, recordId })
   },
+  routes: [
+    { view: 'Tasks', path: 'tasks' },
+    { view: 'TaskCalendar', path: 'tasks/calendar' },
+    { view: 'Kanban', path: 'tasks/kanban' },
+    { view: 'TaskDetails', path: 'tasks/:id' }
+  ],
   sidebarSections: [
     {
       label: 'modules.tasks.section',

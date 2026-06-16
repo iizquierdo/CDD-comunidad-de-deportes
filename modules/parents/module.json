@@ -1,0 +1,17 @@
+{
+    "name": "Parents",
+    "code": "PARENTS",
+    "version": "1.0.0",
+    "description": "Padres/Tutores: ABM de los responsables (tutores) de alumnos",
+    "entry": {
+        "api": "modules/parents/server/index.ts",
+        "ui": "modules/parents/client/ParentsModule.tsx",
+        "admin": "modules/parents/server/adminRoutes.ts"
+    },
+    "migrations": [
+        "migrations/001_init_parents.sql"
+    ],
+    "api": {
+        "basePath": "/api/parents"
+    }
+}

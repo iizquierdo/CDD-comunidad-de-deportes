@@ -15,6 +15,12 @@ const moduleDefinition: ModuleClientDefinition = {
     CrmActivities: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(CrmModule, { view: 'activities', setView, currentUser, companyId, onSubTitleChange }),
     CrmWonDeals: ({ setView, currentUser, companyId, onSubTitleChange }) => React.createElement(CrmModule, { view: 'won', setView, currentUser, companyId, onSubTitleChange })
   },
+  routes: [
+    { view: 'CrmOverview', path: 'crm' },
+    { view: 'CrmPipeline', path: 'crm/pipeline' },
+    { view: 'CrmActivities', path: 'crm/activities' },
+    { view: 'CrmWonDeals', path: 'crm/won' }
+  ],
   sidebarSections: [
     {
       label: 'crm.title',

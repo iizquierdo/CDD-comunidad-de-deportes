@@ -45,9 +45,16 @@ export const DISCIPLINE_TRANSLATIONS = {
         url: 'URL',
         uploadFile: 'Upload file',
         open: 'Open',
+        resourceLibrary: 'Resource Library',
+        resourceLibraryDesc: 'All resources from every discipline, filtered by your access level.',
+        loading: 'Loading...',
         noResources: 'No resources yet.',
         delete: 'Delete',
         deleteConfirm: 'Delete this item?',
+        classes: 'Classes',
+        students: 'Students',
+        // Classes tab
+        classAdvancedHint: 'Manage schedules, teachers and levels from the class detail view.',
         // Errors
         errorLoad: 'Failed to load disciplines.',
         errorSave: 'Failed to save.',
@@ -101,9 +108,16 @@ export const DISCIPLINE_TRANSLATIONS = {
         url: 'URL',
         uploadFile: 'Subir archivo',
         open: 'Abrir',
+        resourceLibrary: 'Biblioteca de recursos',
+        resourceLibraryDesc: 'Todos los recursos de cada disciplina, filtrados según tu nivel de acceso.',
+        loading: 'Cargando...',
         noResources: 'Todavía no hay recursos.',
         delete: 'Eliminar',
         deleteConfirm: '¿Eliminar este elemento?',
+        classes: 'Clases',
+        students: 'Alumnos',
+        // Pestaña de clases
+        classAdvancedHint: 'Gestioná horarios, profesores y niveles desde el detalle de la clase.',
         // Errors
         errorLoad: 'No se pudieron cargar las disciplinas.',
         errorSave: 'No se pudo guardar.',

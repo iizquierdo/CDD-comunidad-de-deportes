@@ -6,7 +6,11 @@ import { cn } from '@/lib/utils';
 const links = [
   { to: '/admin/organizations', label: 'Organizations', icon: 'fa-building' },
   { to: '/admin/subscription-plans', label: 'Plans', icon: 'fa-layer-group' },
-  { to: '/admin/assets', label: 'Assets', icon: 'fa-boxes-stacked' },
+  { to: '/admin/teachers', label: 'Profesores', icon: 'fa-chalkboard-user' },
+  { to: '/admin/parents', label: 'Padres', icon: 'fa-people-roof' },
+  { to: '/admin/classes', label: 'Clases', icon: 'fa-calendar-days' },
+  { to: '/admin/assets', label: 'Recursos', icon: 'fa-boxes-stacked' },
+  { to: '/admin/discipline-resources', label: 'Recursos de Disciplinas', icon: 'fa-photo-film' },
   { to: '/admin/settings/categories', label: 'Categories', icon: 'fa-tags' },
   { to: '/admin/settings/references', label: 'References', icon: 'fa-hashtag' },
   { to: '/admin/settings/configuration', label: 'Configuración', icon: 'fa-sliders' },

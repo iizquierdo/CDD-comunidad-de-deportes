@@ -34,6 +34,8 @@ import {
   userCanAccessCompany,
   cloneAllCoreReferencesToCompany,
   reserveNextReference,
+  putObject,
+  getObjectStream,
   type TenantAuthContext
 } from '@sinapsis/module-sdk-server';
 import {
@@ -58,7 +60,27 @@ const prisma = new PrismaClient({ adapter });
 const app = express();
 app.use(express.json());
 app.use(cors());
+// Local files are served straight from disk. When the active storage provider
+// is S3, objects are not on disk, so static() falls through (next()) and the
+// handler below streams them from the bucket — keeping `/storage/<key>` URLs
+// valid regardless of the configured backend.
 app.use('/storage', express.static(STORAGE_ROOT));
+app.get(/^\/storage\/(.+)/, async (req, res) => {
+    try {
+        const key = decodeURIComponent(req.params[0] || '');
+        if (!key || key.includes('..')) return res.status(400).end();
+        const object = await getObjectStream(pool, key);
+        if (!object) return res.status(404).end();
+        if (object.contentType) res.setHeader('Content-Type', object.contentType);
+        if (typeof object.contentLength === 'number') res.setHeader('Content-Length', String(object.contentLength));
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        object.body.on('error', () => { if (!res.headersSent) res.status(502).end(); });
+        object.body.pipe(res);
+    } catch (error: any) {
+        console.error('Error serving storage object from S3:', error?.message || error);
+        if (!res.headersSent) res.status(500).end();
+    }
+});
 
 app.get('/api/public/core', async (_req, res) => {
   try {
@@ -571,7 +593,12 @@ const getNormalizedUserById = async (id: string) => {
     if (!user) return null;
 
     const extraResult = await pool.query(
-        'SELECT "language", "accessCompanyIds" FROM "User" WHERE id = $1 LIMIT 1',
+        `SELECT u."language", u."accessCompanyIds", o."defaultLanguage" AS "organizationDefaultLanguage"
+           FROM "User" u
+           LEFT JOIN "Company" c ON c.id = u."companyId"
+           LEFT JOIN "Organization" o ON o.id = c."organizationId"
+          WHERE u.id = $1
+          LIMIT 1`,
         [id]
     );
     const extra = extraResult.rows[0];
@@ -579,6 +606,7 @@ const getNormalizedUserById = async (id: string) => {
     return {
         ...user,
         language: extra?.language || null,
+        organizationDefaultLanguage: extra?.organizationDefaultLanguage || null,
         accessCompanyIds: parseAccessCompanyIds(extra?.accessCompanyIds)
     };
 };
@@ -1762,29 +1790,15 @@ app.post('/api/companies/:id/logo', upload.single('logo'), async (req, res) => {
 
         const orgResult = await pool.query('SELECT * FROM "Organization" WHERE id = $1 LIMIT 1', [ctx.organizationId]);
         const org = orgResult.rows[0];
-        const provider = org?.storageProvider || 'Local';
-        
-        let logoUrl = '';
+        const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + org.id.split('-')[0];
+        const logoFilename = `logo_${Date.now()}${path.extname(file.originalname)}`;
 
-        if (provider === 'Local') {
-            const storagePath = STORAGE_ROOT;
-            const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + org.id.split('-')[0];
-            const logoFilename = `logo_${Date.now()}${path.extname(file.originalname)}`;
-            const finalPath = path.join(storagePath, orgFolderName, logoFilename);
-            
-            if (!fs.existsSync(path.dirname(finalPath))) {
-                fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-            }
-            
-            fs.writeFileSync(finalPath, file.buffer);
-            logoUrl = `/storage/${orgFolderName}/${logoFilename}`;
-        } else {
-            // For S3, GoogleCloud, Azure, we would ideally use their SDKs. 
-            // For now, if not Local, we'll return an error or log it as TODO if SDKs are missing.
-            // But if user expects it to work, I should try to implement S3 if possible.
-            // Since SDKs are not installed, I'll log a warning and fallback to Local or error.
-            return res.status(501).json({ error: `Storage provider ${provider} not fully implemented yet in the API. Please use Local for now.` });
-        }
+        const { url: logoUrl } = await putObject({
+            pool,
+            key: `${orgFolderName}/${logoFilename}`,
+            buffer: file.buffer,
+            contentType: file.mimetype
+        });
 
         await pool.query('UPDATE "Company" SET "logoUrl" = $1 WHERE id = $2', [logoUrl, id]);
         res.json({ success: true, logoUrl });
@@ -2678,27 +2692,17 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
 
         const orgResult = await pool.query('SELECT * FROM "Organization" WHERE id = $1 LIMIT 1', [ctx.organizationId]);
         const org = orgResult.rows[0];
-        const provider = org?.storageProvider || 'Local';
+        const orgFolderName = org?.name && org?.id
+            ? `${org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${String(org.id).split('-')[0]}`
+            : 'organization';
+        const avatarFilename = `avatar_${id}_${Date.now()}${path.extname(file.originalname)}`;
 
-        let avatarUrl = '';
-
-        if (provider === 'Local') {
-            const storagePath = STORAGE_ROOT;
-            const orgFolderName = org?.name && org?.id
-                ? `${org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${String(org.id).split('-')[0]}`
-                : 'organization';
-            const avatarFilename = `avatar_${id}_${Date.now()}${path.extname(file.originalname)}`;
-            const finalPath = path.join(storagePath, orgFolderName, avatarFilename);
-
-            if (!fs.existsSync(path.dirname(finalPath))) {
-                fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-            }
-
-            fs.writeFileSync(finalPath, file.buffer);
-            avatarUrl = `/storage/${orgFolderName}/${avatarFilename}`;
-        } else {
-            return res.status(501).json({ error: `Storage provider ${provider} not fully implemented yet in the API. Please use Local for now.` });
-        }
+        const { url: avatarUrl } = await putObject({
+            pool,
+            key: `${orgFolderName}/${avatarFilename}`,
+            buffer: file.buffer,
+            contentType: file.mimetype
+        });
 
         const updatedUser = await prisma.user.update({
             where: { id },
@@ -3755,23 +3759,23 @@ app.post(['/api/public/files/upload', '/api/public/entity-files/upload'], requir
         const safeBaseName = baseName.replace(/[^\w\-\. ]/g, '_').trim() || 'file';
         const filename = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
 
-        const storagePath = STORAGE_ROOT;
         const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + String(org.id).split('-')[0];
-        const relativePath = path.join(orgFolderName, 'files', sourceModule.toLowerCase(), sourceId, filename);
-        const finalPath = path.join(storagePath, relativePath);
-        const finalDir = path.dirname(finalPath);
-        if (!fs.existsSync(finalDir)) fs.mkdirSync(finalDir, { recursive: true });
-        fs.writeFileSync(finalPath, file.buffer);
+        const objectKey = `${orgFolderName}/files/${sourceModule.toLowerCase()}/${sourceId}/${filename}`;
+        const { url: fileUrl } = await putObject({
+            pool,
+            key: objectKey,
+            buffer: file.buffer,
+            contentType: file.mimetype
+        });
 
         const id = crypto.randomUUID();
-        const fileUrl = `/storage/${relativePath.replace(/\\/g, '/')}`;
         await pool.query(
             `INSERT INTO "EntityFile" (
                 id, "sourceModule", "sourceId", name, "originalName", "fileUrl", "filePath", "mimeType", "fileExt", "sizeBytes", status, "createdById", "updatedById", "createdAt", "updatedAt"
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Active', $11, $12, NOW(), NOW()
             )`,
-            [id, sourceModule, sourceId, safeBaseName, file.originalname || safeBaseName, fileUrl, finalPath, file.mimetype || null, ext || null, Number(file.size || 0), userId, userId]
+            [id, sourceModule, sourceId, safeBaseName, file.originalname || safeBaseName, fileUrl, objectKey, file.mimetype || null, ext || null, Number(file.size || 0), userId, userId]
         );
         const created = await pool.query('SELECT * FROM "EntityFile" WHERE id = $1 LIMIT 1', [id]);
         res.status(201).json(created.rows[0]);

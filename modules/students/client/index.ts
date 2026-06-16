@@ -12,9 +12,13 @@ const moduleDefinition: ModuleClientDefinition = {
   views: {
     Students: ({ setView, currentUser, companyId, onSubTitleChange }) =>
       React.createElement(StudentModule, { view: 'list', setView, currentUser, companyId, onSubTitleChange }),
-    StudentDetails: ({ setView, currentUser, companyId, onSubTitleChange }) =>
-      React.createElement(StudentModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange })
+    StudentDetails: ({ setView, currentUser, companyId, onSubTitleChange, recordId }) =>
+      React.createElement(StudentModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange, recordId })
   },
+  routes: [
+    { view: 'Students', path: 'students' },
+    { view: 'StudentDetails', path: 'students/:id' }
+  ],
   sidebarSections: [
     {
       label: 'students.title',

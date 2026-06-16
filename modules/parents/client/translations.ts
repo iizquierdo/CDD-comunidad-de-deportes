@@ -1,0 +1,70 @@
+export const PARENTS_TRANSLATIONS = {
+  en: {
+    translation: {
+      parents: {
+        title: 'Parents',
+        description: 'Manage parents/guardians (Tutor accounts) for your sedes.',
+        list: 'Parents',
+        newParent: 'New parent',
+        editParent: 'Edit parent',
+        save: 'Save',
+        cancel: 'Cancel',
+        searchPlaceholder: 'Search parents...',
+        name: 'Name',
+        firstName: 'First name',
+        lastName: 'Last name',
+        email: 'Email',
+        phone: 'Phone',
+        document: 'Document',
+        sede: 'Sede (company)',
+        password: 'Password',
+        passwordEdit: 'Password',
+        passwordPlaceholder: 'Leave blank to keep current',
+        actions: 'Actions',
+        edit: 'Edit',
+        delete: 'Delete',
+        deleteConfirm: 'Delete parent {{name}}? This cannot be undone.',
+        noParents: 'No parents to show.',
+        errorLoad: 'Failed to load.',
+        errorSave: 'Failed to save.',
+        errorEmailRequired: 'Email is required.',
+        errorSedeRequired: 'Sede is required.',
+        errorPasswordRequired: 'Password is required.'
+      }
+    }
+  },
+  es: {
+    translation: {
+      parents: {
+        title: 'Padres',
+        description: 'Gestioná los padres/responsables (cuentas de Tutor) de tus sedes.',
+        list: 'Padres',
+        newParent: 'Nuevo padre',
+        editParent: 'Editar padre',
+        save: 'Guardar',
+        cancel: 'Cancelar',
+        searchPlaceholder: 'Buscar padres...',
+        name: 'Nombre',
+        firstName: 'Nombre',
+        lastName: 'Apellido',
+        email: 'Email',
+        phone: 'Teléfono',
+        document: 'Documento',
+        sede: 'Sede (compañía)',
+        password: 'Contraseña',
+        passwordEdit: 'Contraseña',
+        passwordPlaceholder: 'Dejar en blanco para no cambiar',
+        actions: 'Acciones',
+        edit: 'Editar',
+        delete: 'Eliminar',
+        deleteConfirm: '¿Eliminar al padre {{name}}? Esta acción no se puede deshacer.',
+        noParents: 'No hay padres para mostrar.',
+        errorLoad: 'No se pudo cargar.',
+        errorSave: 'No se pudo guardar.',
+        errorEmailRequired: 'El email es obligatorio.',
+        errorSedeRequired: 'La sede es obligatoria.',
+        errorPasswordRequired: 'La contraseña es obligatoria.'
+      }
+    }
+  }
+};

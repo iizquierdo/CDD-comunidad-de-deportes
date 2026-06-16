@@ -1,0 +1,19 @@
+{
+    "name": "Classes",
+    "code": "CLASSES",
+    "version": "1.0.0",
+    "description": "Clases de cada disciplina: niveles propios, profesores, días/horarios y alumnos asignados",
+    "entry": {
+        "api": "modules/classes/server/index.ts",
+        "ui": "modules/classes/client/ClassModule.tsx",
+        "admin": "modules/classes/server/adminRoutes.ts"
+    },
+    "migrations": [
+        "migrations/001_init_classes.sql"
+    ],
+    "api": {
+        "basePath": "/api/classes",
+        "openapiPath": "/api/classes/openapi.json",
+        "docsPath": "/api/classes/docs"
+    }
+}

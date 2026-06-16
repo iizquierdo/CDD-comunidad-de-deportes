@@ -14,12 +14,20 @@ import CategoriesPage from './pages/CategoriesPage';
 import ReferencesPage from './pages/ReferencesPage';
 import AssetsAdminPage from './pages/AssetsAdminPage';
 import SubscriptionPlansPage from './pages/SubscriptionPlansPage';
+import ProfesoresPage from './pages/ProfesoresPage';
+import PadresPage from './pages/PadresPage';
+import ClasesPage from './pages/ClasesPage';
+import DisciplineResourcesAdminPage from './pages/DisciplineResourcesAdminPage';
 
 const AdminProtectedRoutes: React.FC<{ email?: string; onLogout: () => void }> = ({ email, onLogout }) => (
   <Routes>
     <Route element={<AdminLayout email={email} onLogout={onLogout} />}>
       <Route path="organizations" element={<OrganizationsPage />} />
       <Route path="subscription-plans" element={<SubscriptionPlansPage />} />
+      <Route path="teachers" element={<ProfesoresPage />} />
+      <Route path="parents" element={<PadresPage />} />
+      <Route path="classes" element={<ClasesPage />} />
+      <Route path="discipline-resources" element={<DisciplineResourcesAdminPage />} />
       <Route path="assets" element={<AssetsAdminPage />} />
       <Route path="settings/modules" element={<ModulesPage />} />
       <Route path="settings/smtp" element={<SmtpPage />} />

@@ -7,9 +7,10 @@ type FinancialView = 'all' | 'invoices' | 'credit-memos' | 'debit-memos' | 'purc
 
 interface FinancialDocumentsModuleProps {
   view: FinancialView;
-  setView: (view: ViewType) => void;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
   currentUser?: AppUser;
   companyId?: string;
+  recordId?: string;
 }
 
 interface MetaItem {
@@ -75,7 +76,6 @@ interface MetaResponse {
 const DEFAULT_TYPES = ['Invoice', 'Credit Memo', 'Debit Memo', 'Purchase Order', 'Receipt', 'Delivery Note'];
 const DEFAULT_STATUSES = ['Draft', 'Issued', 'Approved', 'Paid', 'Cancelled'];
 const DEFAULT_CURRENCIES = ['USD'];
-const SELECTED_DOCUMENT_KEY = 'sinapsis.financial-documents.selected';
 
 const FORCED_TYPE_BY_VIEW: Record<Exclude<FinancialView, 'details'>, string | null> = {
   all: null,
@@ -101,7 +101,7 @@ const toNum = (value: any) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ view, setView, currentUser, companyId }) => {
+const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ view, setView, currentUser, companyId, recordId }) => {
   const { t } = useTranslation();
   const isOrganizationScope = !companyId;
 
@@ -230,7 +230,7 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
       setDocuments(data || []);
 
       if (view === 'details') {
-        const selectedId = localStorage.getItem(SELECTED_DOCUMENT_KEY);
+        const selectedId = recordId;
         if (!selectedId) {
           setSelectedDoc(null);
           setDetailItems([]);
@@ -271,7 +271,7 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
 
   useEffect(() => {
     loadDocuments();
-  }, [companyId, view, forcedType, statusFilter, search]);
+  }, [companyId, view, forcedType, statusFilter, search, recordId]);
 
   useEffect(() => {
     const activeCompanyId = form.companyId || companyId || '';
@@ -367,7 +367,6 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
       await loadDocuments();
 
       if (view === 'details') {
-        localStorage.setItem(SELECTED_DOCUMENT_KEY, saved.id);
         setSelectedDoc(saved);
         setDetailItems((saved.items || []).map((item) => ({ ...item, quantity: toNum(item.quantity), unitPrice: toNum(item.unitPrice), total: toNum(item.total) })));
       }
@@ -386,7 +385,6 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
       }
 
       if (selectedDoc?.id === id) {
-        localStorage.removeItem(SELECTED_DOCUMENT_KEY);
         setSelectedDoc(null);
         setDetailItems([]);
         setView('FinancialDocuments');
@@ -419,7 +417,6 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
 
   const showDetails = async (docId: string) => {
     try {
-      localStorage.setItem(SELECTED_DOCUMENT_KEY, docId);
       const res = await fetch(`/api/financial-documents/${docId}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -428,7 +425,7 @@ const FinancialDocumentsModule: React.FC<FinancialDocumentsModuleProps> = ({ vie
       const detail: FinancialDocument = await res.json();
       setSelectedDoc(detail);
       setDetailItems((detail.items || []).map((item) => ({ ...item, quantity: toNum(item.quantity), unitPrice: toNum(item.unitPrice), total: toNum(item.total) })));
-      setView('FinancialDocumentDetails');
+      setView('FinancialDocumentDetails', { id: docId });
     } catch (e: any) {
       setError(e.message || t('financial.errorLoadDetails'));
     }

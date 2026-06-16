@@ -1,7 +1,6 @@
 import express from 'express';
 import type pg from 'pg';
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import {
@@ -11,10 +10,9 @@ import {
   validateAdminEnv,
   verifyAdminToken
 } from './auth';
-import { propagateReferenceTemplateToAllCompanies } from '@sinapsis/module-sdk-server';
+import { propagateReferenceTemplateToAllCompanies, putObject, loadStorageConfig, testStorageConfig, type StorageProvider } from '@sinapsis/module-sdk-server';
 import { loadModuleAdminRoutes } from './loadModuleAdminRoutes';
 import { isPlainObject, isValidEmail, mergeSmtpDraftOntoStored, normalizeSmtpConfig, sendTestEmailWithConfig } from '../smtpMail';
-import { STORAGE_ROOT } from '../paths';
 
 type PrismaLike = any;
 
@@ -641,21 +639,16 @@ export const createAdminRouter = async ({ prisma, pool }: CreateAdminRouterArgs)
       if (type !== 'logo' && type !== 'favicon' && type !== 'sidebarlogo' && type !== 'loginbackground') {
         return res.status(400).json({ error: 'type must be logo, favicon, sidebarLogo, or loginBackground' });
       }
-      const orgResult = await pool.query('SELECT "storageProvider" FROM "Organization" LIMIT 1');
-      const provider = String(orgResult.rows[0]?.storageProvider || 'Local');
-      if (provider !== 'Local') {
-        return res.status(501).json({ error: `Storage provider ${provider} is not supported for platform uploads yet. Use Local storage.` });
-      }
-      const storagePath = STORAGE_ROOT;
-      const dir = path.join(storagePath, 'platform');
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const ext = path.extname(file.originalname) || (type === 'favicon' ? '.ico' : '.png');
       const filePrefix =
         type === 'sidebarlogo' ? 'sidebar_logo' : type === 'loginbackground' ? 'login_background' : type;
       const filename = `${filePrefix}_${Date.now()}${ext}`;
-      const finalPath = path.join(dir, filename);
-      fs.writeFileSync(finalPath, file.buffer);
-      const url = `/storage/platform/${filename}`;
+      const { url } = await putObject({
+        pool,
+        key: `platform/${filename}`,
+        buffer: file.buffer,
+        contentType: file.mimetype
+      });
       await ensureCoreTableWithPool(pool);
       const update =
         type === 'logo'
@@ -716,10 +709,24 @@ export const createAdminRouter = async ({ prisma, pool }: CreateAdminRouterArgs)
   router.post('/settings/:key/test', async (req, res) => {
     try {
       const key = String(req.params.key || '').trim().toLowerCase();
-      if (key !== 'smtp' || !PLATFORM_KEYS.has(key)) {
-        return res.status(400).json({ error: 'Test is only available for the smtp platform setting.' });
+      if (!PLATFORM_KEYS.has(key) || (key !== 'smtp' && key !== 'storage')) {
+        return res.status(400).json({ error: 'Test is only available for the smtp and storage platform settings.' });
       }
       await ensureAdminTables(pool);
+
+      // Storage: validate connectivity against the posted config (falling back to the saved one).
+      if (key === 'storage') {
+        const reqBody = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
+        const posted = isPlainObject(reqBody.value) ? (reqBody.value as Record<string, unknown>) : null;
+        const config = posted
+          ? {
+              provider: (String(posted.provider || 'Local') as StorageProvider),
+              settings: (isPlainObject(posted.settings) ? posted.settings : {}) as Record<string, unknown>
+            }
+          : await loadStorageConfig(pool);
+        const result = await testStorageConfig(config as Parameters<typeof testStorageConfig>[0]);
+        return res.status(result.ok ? 200 : 400).json(result);
+      }
 
       let body: Record<string, unknown> = isPlainObject(req.body) ? (req.body as Record<string, unknown>) : {};
       if (typeof req.body === 'string') {

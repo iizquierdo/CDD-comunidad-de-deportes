@@ -92,6 +92,8 @@ export interface AppUser {
   joinedDate: string;
   avatar?: string;
   language?: string;
+  /** Default UI language saved on the user's tenant (Organization). Used when the user has no personal language. */
+  organizationDefaultLanguage?: string;
   accessCompanyIds?: string[];
 }
 

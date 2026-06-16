@@ -11,5 +11,8 @@
   "peerDependencies": {
     "express": "^5",
     "pg": "^8"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1069.0"
   }
 }

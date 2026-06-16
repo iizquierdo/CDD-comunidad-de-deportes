@@ -8,7 +8,8 @@
         "ui": "modules/disciplines/client/DisciplineModule.tsx"
     },
     "migrations": [
-        "migrations/001_init_disciplines.sql"
+        "migrations/001_init_disciplines.sql",
+        "migrations/002_add_cover_url.sql"
     ],
     "api": {
         "basePath": "/api/disciplines",

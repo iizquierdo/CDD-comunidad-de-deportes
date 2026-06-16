@@ -17,8 +17,18 @@ const moduleDefinition: ModuleClientDefinition = {
     FinancialPurchaseOrders: ({ setView, currentUser, companyId }) => React.createElement(FinancialDocumentsModule, { view: 'purchase-orders', setView, currentUser, companyId }),
     FinancialReceipts: ({ setView, currentUser, companyId }) => React.createElement(FinancialDocumentsModule, { view: 'receipts', setView, currentUser, companyId }),
     FinancialDeliveryNotes: ({ setView, currentUser, companyId }) => React.createElement(FinancialDocumentsModule, { view: 'delivery-notes', setView, currentUser, companyId }),
-    FinancialDocumentDetails: ({ setView, currentUser, companyId }) => React.createElement(FinancialDocumentsModule, { view: 'details', setView, currentUser, companyId })
+    FinancialDocumentDetails: ({ setView, currentUser, companyId, recordId }) => React.createElement(FinancialDocumentsModule, { view: 'details', setView, currentUser, companyId, recordId })
   },
+  routes: [
+    { view: 'FinancialDocuments', path: 'financial-documents' },
+    { view: 'FinancialInvoices', path: 'financial-documents/invoices' },
+    { view: 'FinancialCreditMemos', path: 'financial-documents/credit-memos' },
+    { view: 'FinancialDebitMemos', path: 'financial-documents/debit-memos' },
+    { view: 'FinancialPurchaseOrders', path: 'financial-documents/purchase-orders' },
+    { view: 'FinancialReceipts', path: 'financial-documents/receipts' },
+    { view: 'FinancialDeliveryNotes', path: 'financial-documents/delivery-notes' },
+    { view: 'FinancialDocumentDetails', path: 'financial-documents/:id' }
+  ],
   sidebarSections: [
     {
       label: 'financial.title',

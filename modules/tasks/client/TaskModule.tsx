@@ -5,10 +5,11 @@ type TaskView = 'list' | 'calendar' | 'kanban' | 'details';
 
 interface TaskModuleProps {
   view: TaskView;
-  setView: (view: ViewType) => void;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
   currentUser?: AppUser;
   companyId?: string;
   onSubTitleChange?: (subtitle: string) => void;
+  recordId?: string;
 }
 
 interface TaskUser {
@@ -45,9 +46,7 @@ interface MetaResponse {
   };
 }
 
-const SELECTED_TASK_KEY = 'sinapsis.tasks.selected';
-
-const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, companyId, onSubTitleChange }) => {
+const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, companyId, onSubTitleChange, recordId }) => {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [users, setUsers] = useState<TaskUser[]>([]);
   const [meta, setMeta] = useState<MetaResponse['categories']>({ types: [], statuses: [], priorities: [] });
@@ -112,8 +111,7 @@ const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, com
       setTasks(data || []);
 
       if (view === 'details') {
-        const selectedId = localStorage.getItem(SELECTED_TASK_KEY);
-        const found = (data || []).find((item) => item.id === selectedId);
+        const found = (data || []).find((item) => item.id === recordId);
         setSelectedTask(found || null);
       }
     } catch (e: any) {
@@ -129,7 +127,7 @@ const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, com
 
   useEffect(() => {
     loadTasks();
-  }, [companyId, currentUser?.id, mode, search, view]);
+  }, [companyId, currentUser?.id, mode, search, view, recordId]);
 
   const openCreate = () => {
     setEditingTask(null);
@@ -216,7 +214,6 @@ const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, com
       }
       await loadTasks();
       if (selectedTask?.id === taskId) {
-        localStorage.removeItem(SELECTED_TASK_KEY);
         setSelectedTask(null);
         setView('Tasks');
       }
@@ -345,9 +342,8 @@ const TaskModule: React.FC<TaskModuleProps> = ({ view, setView, currentUser, com
   };
 
   const showDetails = (task: TaskItem) => {
-    localStorage.setItem(SELECTED_TASK_KEY, task.id);
     setSelectedTask(task);
-    setView('TaskDetails');
+    setView('TaskDetails', { id: task.id });
   };
 
   const statuses = useMemo(() => {

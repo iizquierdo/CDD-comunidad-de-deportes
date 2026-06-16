@@ -9,6 +9,7 @@ import {
   resolveRequesterScope,
   resolveTenantAuthContext,
   getRequesterUserId,
+  putObject,
   type RequesterScope
 } from '@sinapsis/module-sdk-server';
 
@@ -43,6 +44,12 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
     const mod = await pool.query('SELECT status FROM "SystemModule" WHERE code = $1 LIMIT 1', [MODULE_CODE]);
     return String(mod.rows[0]?.status || '') === 'Active';
   };
+
+  // Idempotent schema guard: the migration adds "coverUrl" on fresh installs,
+  // but already-installed dev DBs need it applied on boot too.
+  void pool
+    .query('ALTER TABLE "Discipline" ADD COLUMN IF NOT EXISTS "coverUrl" TEXT')
+    .catch(() => {});
 
   const disciplineExists = async (id: string) => {
     const r = await pool.query('SELECT id FROM "Discipline" WHERE id = $1 LIMIT 1', [id]);
@@ -87,6 +94,7 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
           put: { tags: ['Disciplines'], summary: 'Update discipline', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } }
         },
         '/api/disciplines/{id}/status': { patch: { tags: ['Disciplines'], summary: 'Toggle status', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
+        '/api/disciplines/{id}/image': { post: { tags: ['Disciplines'], summary: 'Upload logo or cover image (multipart: file, kind=logo|cover)', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
         '/api/disciplines/{id}/levels': { get: {}, post: {} },
         '/api/disciplines/{id}/levels/reorder': { post: {} },
         '/api/disciplines/{id}/resources': { get: {}, post: {} }
@@ -129,6 +137,30 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
     }
   });
 
+  // ---- All resources across disciplines (for library view) -----------------
+  router.get('/resources', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Disciplines module is not active.' });
+      const uid = requesterId(req);
+      const ctx = uid ? await resolveTenantAuthContext(pool, uid) : null;
+      const scope = ctx ? await resolveRequesterScope(pool, uid) : null;
+      const visibilities = allowedVisibilities(scope);
+      const placeholders = visibilities.map((_, i) => `$${i + 1}`).join(', ');
+      const result = await pool.query(
+        `SELECT r.*, d.name AS "disciplineName", u.name AS "createdByName"
+         FROM "DisciplineResource" r
+         JOIN "Discipline" d ON d.id = r."disciplineId"
+         LEFT JOIN "User" u ON u.id = r."createdById"
+         WHERE r.active = true AND r.visibility IN (${placeholders})
+         ORDER BY d.name ASC, r.title ASC`,
+        visibilities
+      );
+      res.json(result.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch resources', details: error.message });
+    }
+  });
+
   // ---- Disciplines collection ----------------------------------------------
   router.get('/', async (req, res) => {
     try {
@@ -151,7 +183,9 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
         `
           SELECT d.*,
                  (SELECT COUNT(*)::int FROM "DisciplineLevel" l WHERE l."disciplineId" = d.id) AS "levelCount",
-                 (SELECT COUNT(*)::int FROM "DisciplineResource" r WHERE r."disciplineId" = d.id AND r.active = true) AS "resourceCount"
+                 (SELECT COUNT(*)::int FROM "DisciplineResource" r WHERE r."disciplineId" = d.id AND r.active = true) AS "resourceCount",
+                 (SELECT COUNT(*)::int FROM "Class" c WHERE c."disciplineId" = d.id AND c.status = 'ACTIVE') AS "classCount",
+                 (SELECT COUNT(*)::int FROM "ClassStudent" cs JOIN "Class" c ON c.id = cs."classId" WHERE c."disciplineId" = d.id AND cs.status = 'ACTIVE') AS "studentCount"
           FROM "Discipline" d
           ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
           ORDER BY d.name ASC
@@ -177,13 +211,14 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
 
       const id = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO "Discipline" (id, name, description, "imageUrl", active, "createdById", "updatedById", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $6, NOW(), NOW())`,
+        `INSERT INTO "Discipline" (id, name, description, "imageUrl", "coverUrl", active, "createdById", "updatedById", "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7, NOW(), NOW())`,
         [
           id,
           name,
           String(req.body?.description || '').trim() || null,
           String(req.body?.imageUrl || '').trim() || null,
+          String(req.body?.coverUrl || '').trim() || null,
           req.body?.active === false ? false : true,
           userId
         ]
@@ -394,18 +429,12 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
 
       const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
       const org = orgResult.rows[0] || { name: 'org', id: '1' };
-      const provider = org?.storageProvider || 'Local';
-      if (provider !== 'Local') return res.status(501).json({ error: `Storage provider ${provider} not implemented. Use Local.` });
 
       const ext = path.extname(file.originalname || '').toLowerCase();
       const filename = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
-      const storagePath = path.resolve(process.cwd(), 'storage');
       const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + String(org.id).split('-')[0];
-      const relativePath = path.join(orgFolderName, 'disciplines', disciplineId, filename);
-      const finalPath = path.join(storagePath, relativePath);
-      if (!fs.existsSync(path.dirname(finalPath))) fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-      fs.writeFileSync(finalPath, file.buffer);
-      const fileUrl = `/storage/${relativePath.replace(/\\/g, '/')}`;
+      const objectKey = `${orgFolderName}/disciplines/${disciplineId}/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
 
       const resource = await insertResource(
         disciplineId,
@@ -481,6 +510,39 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
     }
   });
 
+  // ---- Logo / cover image upload --------------------------------------------
+  // kind=logo updates "imageUrl" (avatar), kind=cover updates "coverUrl" (banner).
+  router.post('/:id/image', upload.single('file'), async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Disciplines module is not active.' });
+      const disciplineId = req.params.id;
+      if (!(await disciplineExists(disciplineId))) return res.status(404).json({ error: 'Discipline not found' });
+      const userId = requesterId(req) || String(req.body?.updatedById || '').trim();
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'file is required.' });
+
+      const kind = String(req.body?.kind || 'logo').trim() === 'cover' ? 'cover' : 'logo';
+      const column = kind === 'cover' ? 'coverUrl' : 'imageUrl';
+
+      const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
+      const org = orgResult.rows[0] || { name: 'org', id: '1' };
+
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const filename = `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
+      const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + String(org.id).split('-')[0];
+      const objectKey = `${orgFolderName}/disciplines/${disciplineId}/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
+
+      await pool.query(
+        `UPDATE "Discipline" SET "${column}" = $1, "updatedById" = COALESCE($2, "updatedById"), "updatedAt" = NOW() WHERE id = $3`,
+        [fileUrl, userId || null, disciplineId]
+      );
+      res.json(await getDisciplineById(disciplineId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to upload image', details: error.message });
+    }
+  });
+
   // ---- Single discipline (kept after literal/sub-resource routes) -----------
   router.get('/:id', async (req, res) => {
     try {
@@ -509,11 +571,12 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
       }
 
       await pool.query(
-        `UPDATE "Discipline" SET name = $1, description = $2, "imageUrl" = $3, active = $4, "updatedById" = $5, "updatedAt" = NOW() WHERE id = $6`,
+        `UPDATE "Discipline" SET name = $1, description = $2, "imageUrl" = $3, "coverUrl" = $4, active = $5, "updatedById" = $6, "updatedAt" = NOW() WHERE id = $7`,
         [
           name,
           req.body?.description !== undefined ? (String(req.body.description).trim() || null) : existing.description,
           req.body?.imageUrl !== undefined ? (String(req.body.imageUrl).trim() || null) : existing.imageUrl,
+          req.body?.coverUrl !== undefined ? (String(req.body.coverUrl).trim() || null) : existing.coverUrl,
           req.body?.active !== undefined ? Boolean(req.body.active) : existing.active,
           userId,
           req.params.id

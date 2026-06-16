@@ -19,10 +19,11 @@ type CommunityView = 'list' | 'details';
 
 interface Props {
   view: CommunityView;
-  setView: (view: ViewType) => void;
+  setView: (view: ViewType, params?: Record<string, string>) => void;
   currentUser?: AppUser;
   companyId?: string;
   onSubTitleChange?: (subtitle: string) => void;
+  recordId?: string;
 }
 
 interface CompanyItem { id: string; name: string }
@@ -32,11 +33,10 @@ interface MemberItem { id: string; studentId: string; firstName?: string; lastNa
 interface StudentItem { id: string; firstName: string; lastName: string; code: string }
 interface PostItem { id: string; title: string; content?: string | null; status: string; membersOnly: boolean; authorName?: string; createdAt: string }
 
-const SELECTED_KEY = 'sinapsis.communities.selected';
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100';
 const labelize = (raw: string) => String(raw || '').toLowerCase().split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
-const CommunityModule: React.FC<Props> = ({ view, setView, currentUser, companyId, onSubTitleChange }) => {
+const CommunityModule: React.FC<Props> = ({ view, setView, currentUser, companyId, onSubTitleChange, recordId }) => {
   const { t } = useTranslation();
   const userId = currentUser?.id || '';
 
@@ -98,11 +98,12 @@ const CommunityModule: React.FC<Props> = ({ view, setView, currentUser, companyI
   useEffect(() => { void loadMeta(); }, []);
   useEffect(() => {
     if (view === 'list') { void loadCommunities(); setSelected(null); }
-    else { const id = localStorage.getItem(SELECTED_KEY); if (id) void loadDetails(id); else setView('Communities'); }
+    else if (recordId) { void loadDetails(recordId); }
+    else { setView('Communities'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, companyId]);
+  }, [view, companyId, recordId]);
 
-  const openDetails = (c: CommunityRow) => { localStorage.setItem(SELECTED_KEY, c.id); setActiveTab('Overview'); setView('CommunityDetails'); };
+  const openDetails = (c: CommunityRow) => { setActiveTab('Overview'); setView('CommunityDetails', { id: c.id }); };
 
   const openCreate = () => { setEditingId(null); setForm({ name: '', description: '', companyId: companyId || companies[0]?.id || '', disciplineId: '', active: true }); setCommunityModalOpen(true); };
   const openEdit = (c: any) => { setEditingId(c.id); setForm({ name: c.name || '', description: c.description || '', companyId: c.companyId || '', disciplineId: c.disciplineId || '', active: c.active }); setCommunityModalOpen(true); };

@@ -266,8 +266,19 @@ const Sidebar: React.FC<SidebarProps> = ({
         if (item.view) map[item.view] = group.key;
       }
     }
+    // Map detail views (those with a breadcrumb listTarget) to the same
+    // rail group as their parent list view, so the sidebar doesn't fall
+    // back to Dashboard when navigating to a detail page.
+    for (const module of activeClientModules) {
+      for (const [view, bc] of Object.entries(module.breadcrumbs || {})) {
+        const target = (bc as any).listTarget as string | undefined;
+        if (target && map[target] && !map[view]) {
+          map[view] = map[target];
+        }
+      }
+    }
     return map;
-  }, [resolvedMenuGroups]);
+  }, [resolvedMenuGroups, activeClientModules]);
 
   const fetchData = () => {
     fetch('/api/organization')

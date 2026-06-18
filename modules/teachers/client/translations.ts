@@ -5,6 +5,7 @@ export const TEACHERS_TRANSLATIONS = {
         title: 'Teachers',
         description: 'Manage teachers (Profesor accounts) for your sedes.',
         list: 'Teachers',
+        details: 'Teacher detail',
         newTeacher: 'New teacher',
         editTeacher: 'Edit teacher',
         save: 'Save',
@@ -29,7 +30,17 @@ export const TEACHERS_TRANSLATIONS = {
         errorSave: 'Failed to save.',
         errorEmailRequired: 'Email is required.',
         errorSedeRequired: 'Sede is required.',
-        errorPasswordRequired: 'Password is required.'
+        errorPasswordRequired: 'Password is required.',
+        overview: 'Overview',
+        classesTab: 'Classes',
+        studentsTab: 'Students',
+        noClasses: 'No classes assigned to this teacher.',
+        noStudents: 'No active students found for this teacher.',
+        addToClass: 'Add to class',
+        removeFromClass: 'Remove from class',
+        removeClassConfirm: 'Remove this teacher from the class?',
+        selectClass: 'Select class',
+        noAvailableClasses: 'All classes are already assigned.'
       }
     }
   },
@@ -39,6 +50,7 @@ export const TEACHERS_TRANSLATIONS = {
         title: 'Profesores',
         description: 'Gestioná los profesores (cuentas con rol Profesor) de tus sedes.',
         list: 'Profesores',
+        details: 'Detalle del profesor',
         newTeacher: 'Nuevo profesor',
         editTeacher: 'Editar profesor',
         save: 'Guardar',
@@ -63,7 +75,17 @@ export const TEACHERS_TRANSLATIONS = {
         errorSave: 'No se pudo guardar.',
         errorEmailRequired: 'El email es obligatorio.',
         errorSedeRequired: 'La sede es obligatoria.',
-        errorPasswordRequired: 'La contraseña es obligatoria.'
+        errorPasswordRequired: 'La contraseña es obligatoria.',
+        overview: 'Resumen',
+        classesTab: 'Clases',
+        studentsTab: 'Alumnos',
+        noClasses: 'Este profesor no tiene clases asignadas.',
+        noStudents: 'No se encontraron alumnos activos para este profesor.',
+        addToClass: 'Agregar a clase',
+        removeFromClass: 'Quitar de clase',
+        removeClassConfirm: '¿Quitar a este profesor de la clase?',
+        selectClass: 'Seleccionar clase',
+        noAvailableClasses: 'Ya está asignado a todas las clases disponibles.'
       }
     }
   }

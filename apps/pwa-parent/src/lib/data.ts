@@ -114,9 +114,26 @@ export const fetchReports = async (studentId: string): Promise<StudentReport[]> 
   const { data } = await api.get<any[]>(`/students/${studentId}/reports`);
   return (Array.isArray(data) ? data : []).map((r) => ({
     ...r,
-    author: { id: String(r.authorId || ""), ...splitName(r.authorName) },
+    author: { id: String(r.authorId || ""), ...splitName(r.authorName), avatarUrl: r.authorAvatarUrl ?? null },
     recipients: []
   }));
+};
+
+export const updateReport = async (
+  studentId: string,
+  reportId: string,
+  payload: { title?: string; content?: string; summary?: string; status?: string }
+): Promise<StudentReport> => {
+  const { data } = await api.put<any>(`/students/${studentId}/reports/${reportId}`, payload);
+  return {
+    ...data,
+    author: { id: String(data.authorId || ""), ...splitName(data.authorName), avatarUrl: data.authorAvatarUrl ?? null },
+    recipients: []
+  };
+};
+
+export const deleteReport = async (studentId: string, reportId: string): Promise<void> => {
+  await api.delete(`/students/${studentId}/reports/${reportId}`);
 };
 
 export const fetchConversations = async (studentId: string): Promise<StudentConversation[]> => {

@@ -14,61 +14,52 @@ import type { ConversationStatus, StudentConversation, StudentNotebookDetail, Us
 
 type ArchiveFilter = "ALL" | ConversationStatus;
 
-const getDateValue = (value?: string | null) => {
-  if (!value) return 0;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+const getDateValue = (v?: string | null) => {
+  if (!v) return 0;
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? 0 : t;
 };
 
-const formatClock = (value?: string | null) => {
-  const timestamp = getDateValue(value);
-  if (!timestamp) return "--:--";
-  return new Date(timestamp).toLocaleTimeString("es-AR", {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+const formatClock = (v?: string | null) => {
+  const t = getDateValue(v);
+  if (!t) return "--:--";
+  return new Date(t).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
 };
 
-const formatTicketDate = (value?: string | null) => {
-  const timestamp = getDateValue(value);
-  if (!timestamp) return "SIN FECHA";
-  return new Date(timestamp)
-    .toLocaleDateString("es-AR", {
-      day: "2-digit",
-      month: "short"
-    })
+const formatTicketDate = (v?: string | null) => {
+  const t = getDateValue(v);
+  if (!t) return "SIN FECHA";
+  return new Date(t)
+    .toLocaleDateString("es-AR", { day: "2-digit", month: "short" })
     .toUpperCase();
 };
 
 const statusLabel: Record<ConversationStatus, string> = {
-  OPEN: "ACTIVO",
-  CLOSED: "FINALIZADO",
-  ARCHIVED: "ARCHIVADO"
+  OPEN: "Activo",
+  CLOSED: "Finalizado",
+  ARCHIVED: "Archivado"
 };
 
-const statusClass: Record<ConversationStatus, string> = {
-  OPEN: "open",
-  CLOSED: "closed",
-  ARCHIVED: "archived"
+const statusColors: Record<ConversationStatus, string> = {
+  OPEN: "bg-emerald-50 text-emerald-700",
+  CLOSED: "bg-slate-100 text-slate-500",
+  ARCHIVED: "bg-amber-50 text-amber-600"
 };
 
-const getLastMessage = (conversation: StudentConversation) => {
-  if (!conversation.messages.length) return null;
-  return [...conversation.messages].sort(
-    (left, right) =>
-      getDateValue(right.createdAt) - getDateValue(left.createdAt)
+const getLastMessage = (conv: StudentConversation) => {
+  if (!conv.messages.length) return null;
+  return [...conv.messages].sort(
+    (a, b) => getDateValue(b.createdAt) - getDateValue(a.createdAt)
   )[0];
 };
 
-const truncate = (value: string, max = 100) => {
-  if (value.length <= max) return value;
-  return `${value.slice(0, max).trimEnd()}...`;
-};
+const truncate = (v: string, max = 100) =>
+  v.length <= max ? v : `${v.slice(0, max).trimEnd()}...`;
 
-const getTeacherFromConversations = (conversations: StudentConversation[]) => {
-  for (const conversation of conversations) {
-    const teacher = conversation.participants.find((participant) => participant.user.role === "PROFESOR");
-    if (teacher) return teacher.user;
+const getTeacherFromConversations = (convs: StudentConversation[]) => {
+  for (const c of convs) {
+    const t = c.participants.find((p) => p.user.role === "PROFESOR");
+    if (t) return t.user;
   }
   return null;
 };
@@ -108,29 +99,26 @@ export const CuadernoPage = () => {
       setError(null);
 
       try {
-        const [studentDetailData, conversationsData] = await Promise.all([
+        const [detail, convs] = await Promise.all([
           fetchStudentNotebook(studentId),
           fetchConversations(studentId)
         ]);
 
-        const orderedConversations = [...conversationsData].sort(
-          (left, right) => getDateValue(right.updatedAt) - getDateValue(left.updatedAt)
+        const ordered = [...convs].sort(
+          (a, b) => getDateValue(b.updatedAt) - getDateValue(a.updatedAt)
         );
 
-        setStudentDetail(studentDetailData);
-        setConversations(orderedConversations);
+        setStudentDetail(detail);
+        setConversations(ordered);
 
-        setActiveConversationId((current) => {
-          const preferred = preferredConversationId ?? current;
-          if (preferred && orderedConversations.some((conversation) => conversation.id === preferred)) {
-            return preferred;
-          }
-
-          const openConversation = orderedConversations.find((conversation) => conversation.status === "OPEN");
-          return openConversation?.id ?? orderedConversations[0]?.id ?? null;
+        setActiveConversationId((cur) => {
+          const preferred = preferredConversationId ?? cur;
+          if (preferred && ordered.some((c) => c.id === preferred)) return preferred;
+          const open = ordered.find((c) => c.status === "OPEN");
+          return open?.id ?? ordered[0]?.id ?? null;
         });
-      } catch (requestError) {
-        setError(extractErrorMessage(requestError));
+      } catch (e) {
+        setError(extractErrorMessage(e));
       } finally {
         setLoading(false);
       }
@@ -138,59 +126,53 @@ export const CuadernoPage = () => {
     [studentId]
   );
 
-  useEffect(() => {
-    void loadNotebook();
-  }, [loadNotebook]);
+  useEffect(() => { void loadNotebook(); }, [loadNotebook]);
 
   const assignedTeacher = useMemo<UserRef | null>(() => {
-    const teacherByAssignment = studentDetail?.teacherAssignments?.[0]?.teacher;
-    if (teacherByAssignment) return teacherByAssignment;
+    const t = studentDetail?.teacherAssignments?.[0]?.teacher;
+    if (t) return t;
     return getTeacherFromConversations(conversations);
   }, [conversations, studentDetail]);
 
   const activeConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    () => conversations.find((c) => c.id === activeConversationId) ?? null,
     [activeConversationId, conversations]
   );
 
   const sortedMessages = useMemo(() => {
     if (!activeConversation) return [];
     return [...activeConversation.messages].sort(
-      (left, right) => getDateValue(left.createdAt) - getDateValue(right.createdAt)
+      (a, b) => getDateValue(a.createdAt) - getDateValue(b.createdAt)
     );
   }, [activeConversation]);
 
   const archiveConversations = useMemo(() => {
-    const base = conversations.filter((conversation) => conversation.id !== activeConversation?.id);
+    const base = conversations.filter((c) => c.id !== activeConversation?.id);
     if (archiveFilter === "ALL") return base;
-    return base.filter((conversation) => conversation.status === archiveFilter);
+    return base.filter((c) => c.status === archiveFilter);
   }, [activeConversation?.id, archiveFilter, conversations]);
 
-  const sendMessage = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!activeConversation || !messageDraft.trim()) return;
-
     setSending(true);
     setError(null);
-
     try {
       await sendConversationMessage(activeConversation.id, messageDraft.trim());
       setMessageDraft("");
       await loadNotebook(activeConversation.id);
-    } catch (requestError) {
-      setError(extractErrorMessage(requestError));
+    } catch (err) {
+      setError(extractErrorMessage(err));
     } finally {
       setSending(false);
     }
   };
 
-  const createConsult = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const createConsult = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!studentId || !newSubject.trim() || !newMessage.trim()) return;
-
     setCreating(true);
     setError(null);
-
     try {
       const participantIds = assignedTeacher ? [assignedTeacher.id] : [];
       const created = await createConversation(studentId, {
@@ -198,13 +180,12 @@ export const CuadernoPage = () => {
         participantIds,
         firstMessage: { body: newMessage.trim() }
       });
-
       setShowNewConsult(false);
       setNewSubject("");
       setNewMessage("");
       await loadNotebook(created.id);
-    } catch (requestError) {
-      setError(extractErrorMessage(requestError));
+    } catch (err) {
+      setError(extractErrorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -212,192 +193,265 @@ export const CuadernoPage = () => {
 
   if (!selectedStudent) {
     return (
-      <section className="empty-state-card">
-        <h3>Sin alumno seleccionado</h3>
-        <p>Selecciona un atleta en Resumen para abrir su cuaderno de notas.</p>
-      </section>
+      <div className="flex flex-col items-center justify-center gap-3 px-4 py-20 text-center">
+        <MaterialIcon name="menu_book" className="text-4xl text-slate-200" />
+        <h3 className="font-semibold text-slate-700">Sin alumno seleccionado</h3>
+        <p className="text-sm text-slate-400">
+          Seleccioná un atleta en Resumen para abrir su cuaderno de notas.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="screen-stack notebook-screen">
+    <div className="px-4 pb-6 pt-5">
       {error && (
-        <div className="error-banner">
-          <MaterialIcon className="error-banner-icon" name="warning" />
+        <div className="mb-4 flex items-center gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+          <MaterialIcon name="warning" className="text-base" />
           <span>{error}</span>
         </div>
       )}
 
-      <section className="notebook-hero">
-        <span>{isChatRoute ? "COMUNICATE CON EL PROFE" : "INTERACCION FAMILIAR"}</span>
-        {!isChatRoute && (
-          <h2>
-            Cuaderno de <em>Notas Digital</em>
-          </h2>
-        )}
+      <div className="grid grid-cols-2 gap-3">
 
-        <div className="teacher-pill">
-          <div>
-            <small>Profesor Asignado</small>
-            <p>
-              {assignedTeacher
-                ? `${assignedTeacher.firstName} ${assignedTeacher.lastName}`
-                : "Sin profesor asignado"}
+        {/* Hero */}
+        <div className="col-span-2 relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-500 to-indigo-600 p-5 text-white">
+          <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-white/10" />
+          <div className="relative">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-white/60">
+              {isChatRoute ? "Comunicación directa" : "Interacción familiar"}
             </p>
-          </div>
-          <div className="teacher-avatar">
-            <MaterialIcon name="school" />
+            {!isChatRoute && (
+              <h1 className="mt-1 text-xl font-bold">
+                Cuaderno de <em className="not-italic text-violet-200">Notas Digital</em>
+              </h1>
+            )}
+            {isChatRoute && (
+              <h1 className="mt-1 text-xl font-bold">Hablá con el profe</h1>
+            )}
+            {/* Teacher pill */}
+            <div className="mt-4 flex items-center justify-between rounded-2xl bg-white/15 px-4 py-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  Profesor asignado
+                </p>
+                <p className="mt-0.5 text-sm font-semibold text-white">
+                  {assignedTeacher
+                    ? `${assignedTeacher.firstName} ${assignedTeacher.lastName}`
+                    : "Sin profesor asignado"}
+                </p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
+                <MaterialIcon name="school" className="text-white" />
+              </div>
+            </div>
           </div>
         </div>
-      </section>
 
-      <section className="notebook-chat-card">
-        <header className="notebook-chat-head">
-          <div className="chat-head-left">
-            <span className="status-dot" />
-            <h3>Conversacion Activa</h3>
+        {/* Active chat */}
+        <div className="col-span-2 overflow-hidden rounded-3xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.06)]">
+          {/* Chat header */}
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <h3 className="text-sm font-semibold text-slate-900">Conversación activa</h3>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400">
+              #{activeConversation?.id.slice(-6).toUpperCase() ?? "------"}
+            </span>
           </div>
-          <small>
-            ID: #
-            {activeConversation?.id.slice(-6).toUpperCase() ?? "------"}
-          </small>
-        </header>
 
-        <div className="notebook-chat-body">
-          {loading && <p className="notebook-placeholder">Cargando mensajes...</p>}
-
-          {!loading && !activeConversation && (
-            <p className="notebook-placeholder">
-              No hay conversaciones activas. Crea una nueva consulta para comenzar.
-            </p>
-          )}
-
-          {!loading &&
-            sortedMessages.map((message) => {
-              const isMine = message.senderId === user?.id;
-              return (
-                <div className={`chat-row ${isMine ? "mine" : "theirs"}`} key={message.id}>
-                  {!isMine && <div className="chat-avatar">{message.sender.firstName.charAt(0)}</div>}
-                  <div className="chat-bubble">
-                    <p>{message.body}</p>
-
-                    {message.attachments.length > 0 && (
-                      <div className="chat-attachments">
-                        {message.attachments.map((attachment, index) => (
-                          <a href={attachment.fileUrl} key={`${message.id}-${index}`} rel="noreferrer" target="_blank">
-                            <MaterialIcon name="attach_file" />
-                            {attachment.fileName}
-                          </a>
-                        ))}
+          {/* Messages */}
+          <div className="flex min-h-[200px] max-h-72 flex-col gap-3 overflow-y-auto p-4">
+            {loading && (
+              <p className="text-center text-sm text-slate-400">Cargando mensajes...</p>
+            )}
+            {!loading && !activeConversation && (
+              <p className="text-center text-sm text-slate-400">
+                No hay conversaciones activas. Creá una nueva consulta para comenzar.
+              </p>
+            )}
+            {!loading &&
+              sortedMessages.map((msg) => {
+                const isMine = msg.senderId === user?.id;
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex items-end gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}
+                  >
+                    {!isMine && (
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-600">
+                        {msg.sender.firstName.charAt(0)}
                       </div>
                     )}
-
-                    <small>{formatClock(message.createdAt)}</small>
+                    <div
+                      className={`max-w-[75%] rounded-2xl px-3 py-2 ${
+                        isMine
+                          ? "rounded-br-sm bg-[var(--primary)] text-white"
+                          : "rounded-bl-sm bg-slate-100 text-slate-800"
+                      }`}
+                    >
+                      <p className="text-sm leading-snug">{msg.body}</p>
+                      {msg.attachments.length > 0 && (
+                        <div className="mt-1.5 space-y-1">
+                          {msg.attachments.map((att, i) => (
+                            <a
+                              key={`${msg.id}-${i}`}
+                              className="flex items-center gap-1 text-xs underline opacity-80"
+                              href={att.fileUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              <MaterialIcon name="attach_file" className="text-xs" />
+                              {att.fileName}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      <p className={`mt-0.5 text-[10px] ${isMine ? "text-white/60" : "text-slate-400"}`}>
+                        {formatClock(msg.createdAt)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-        </div>
+                );
+              })}
+          </div>
 
-        <form className="notebook-compose" onSubmit={sendMessage}>
-          <input
-            onChange={(event) => setMessageDraft(event.target.value)}
-            placeholder="Escribe un mensaje..."
-            type="text"
-            value={messageDraft}
-          />
-          <button disabled={sending || !activeConversation || !messageDraft.trim()} type="submit">
-            <MaterialIcon name="send" filled />
-          </button>
-        </form>
-      </section>
-
-      <section className="notebook-archive-card">
-        <header className="notebook-archive-head">
-          <h3>Archivo de Tickets</h3>
-          <label>
-            <MaterialIcon name="filter_list" />
-            <select
-              onChange={(event) => setArchiveFilter(event.target.value as ArchiveFilter)}
-              value={archiveFilter}
-            >
-              <option value="ALL">Todos</option>
-              <option value="OPEN">Activos</option>
-              <option value="CLOSED">Finalizados</option>
-              <option value="ARCHIVED">Archivados</option>
-            </select>
-          </label>
-        </header>
-
-        <div className="archive-list">
-          {archiveConversations.length === 0 && (
-            <p className="notebook-placeholder">No hay tickets para este filtro.</p>
-          )}
-
-          {archiveConversations.map((conversation) => {
-            const lastMessage = getLastMessage(conversation);
-            return (
-              <button
-                className="archive-item"
-                key={conversation.id}
-                onClick={() => setActiveConversationId(conversation.id)}
-                type="button"
-              >
-                <div className="archive-item-head">
-                  <div className="archive-badges">
-                    <span className={`status-pill ${statusClass[conversation.status]}`}>
-                      {statusLabel[conversation.status]}
-                    </span>
-                    <span className="date-pill">{formatTicketDate(conversation.updatedAt)}</span>
-                  </div>
-                  <MaterialIcon name="arrow_forward" />
-                </div>
-                <h4>{conversation.subject || "Consulta sin asunto"}</h4>
-                <p>
-                  Ultimo mensaje: "{lastMessage ? truncate(lastMessage.body, 85) : "Sin mensajes todavia."}"
-                </p>
-              </button>
-            );
-          })}
-        </div>
-
-        {showNewConsult && (
-          <form className="new-consult-form" onSubmit={createConsult}>
+          {/* Compose */}
+          <form
+            className="flex items-center gap-2 border-t border-slate-100 px-4 py-3"
+            onSubmit={sendMessage}
+          >
             <input
-              onChange={(event) => setNewSubject(event.target.value)}
-              placeholder="Asunto de la consulta"
+              className="flex-1 rounded-full bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:bg-white focus:ring-1 focus:ring-[var(--primary)] transition-all"
+              onChange={(e) => setMessageDraft(e.target.value)}
+              placeholder="Escribí un mensaje..."
               type="text"
-              value={newSubject}
+              value={messageDraft}
             />
-            <textarea
-              onChange={(event) => setNewMessage(event.target.value)}
-              placeholder="Escribe la primera nota para el profesor..."
-              rows={3}
-              value={newMessage}
-            />
-            <div className="new-consult-actions">
-              <button disabled={creating} type="submit">
-                {creating ? "Creando..." : "Crear consulta"}
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewConsult(false);
-                  setNewSubject("");
-                  setNewMessage("");
-                }}
-                type="button"
-              >
-                Cancelar
-              </button>
-            </div>
+            <button
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-white transition-opacity disabled:opacity-40"
+              disabled={sending || !activeConversation || !messageDraft.trim()}
+              type="submit"
+            >
+              <MaterialIcon name="send" filled className="text-sm" />
+            </button>
           </form>
-        )}
+        </div>
 
-        <button className="new-consult-toggle" onClick={() => setShowNewConsult((current) => !current)} type="button">
-          <MaterialIcon name="add_comment" />
-          NUEVA CONSULTA
-        </button>
-      </section>
+        {/* Archive */}
+        <div className="col-span-2 rounded-3xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-900">Archivo de tickets</h3>
+            <div className="flex items-center gap-1.5">
+              <MaterialIcon name="filter_list" className="text-slate-400 text-sm" />
+              <select
+                className="bg-transparent text-xs font-medium text-slate-500 outline-none"
+                onChange={(e) => setArchiveFilter(e.target.value as ArchiveFilter)}
+                value={archiveFilter}
+              >
+                <option value="ALL">Todos</option>
+                <option value="OPEN">Activos</option>
+                <option value="CLOSED">Finalizados</option>
+                <option value="ARCHIVED">Archivados</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="p-3">
+            {archiveConversations.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-400">
+                No hay tickets para este filtro.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {archiveConversations.map((conv) => {
+                  const last = getLastMessage(conv);
+                  return (
+                    <button
+                      key={conv.id}
+                      className="w-full rounded-2xl bg-slate-50 p-4 text-left transition-colors hover:bg-slate-100"
+                      onClick={() => setActiveConversationId(conv.id)}
+                      type="button"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusColors[conv.status]}`}>
+                            {statusLabel[conv.status]}
+                          </span>
+                          <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-[11px] text-slate-500">
+                            {formatTicketDate(conv.updatedAt)}
+                          </span>
+                        </div>
+                        <MaterialIcon name="arrow_forward" className="text-slate-300 text-sm" />
+                      </div>
+                      <h4 className="mt-2 text-sm font-semibold text-slate-900 truncate">
+                        {conv.subject || "Consulta sin asunto"}
+                      </h4>
+                      <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">
+                        {last ? truncate(last.body, 85) : "Sin mensajes todavía."}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* New consult form */}
+            {showNewConsult && (
+              <form
+                className="mt-3 space-y-2 rounded-2xl border border-slate-200 p-4"
+                onSubmit={createConsult}
+              >
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:border-[var(--primary)] focus:bg-white"
+                  onChange={(e) => setNewSubject(e.target.value)}
+                  placeholder="Asunto de la consulta"
+                  type="text"
+                  value={newSubject}
+                />
+                <textarea
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:border-[var(--primary)] focus:bg-white resize-none"
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Escribí la primera nota para el profesor..."
+                  rows={3}
+                  value={newMessage}
+                />
+                <div className="flex gap-2">
+                  <button
+                    className="flex-1 rounded-full bg-[var(--primary)] py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                    disabled={creating}
+                    type="submit"
+                  >
+                    {creating ? "Creando..." : "Crear consulta"}
+                  </button>
+                  <button
+                    className="flex-1 rounded-full border border-slate-200 py-2.5 text-sm font-medium text-slate-600"
+                    onClick={() => {
+                      setShowNewConsult(false);
+                      setNewSubject("");
+                      setNewMessage("");
+                    }}
+                    type="button"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <button
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[var(--primary-softer)] py-3 text-sm font-semibold text-[var(--primary)] transition-colors hover:bg-[var(--primary)] hover:text-white"
+              onClick={() => setShowNewConsult((v) => !v)}
+              type="button"
+            >
+              <MaterialIcon name="add_comment" className="text-base" />
+              Nueva consulta
+            </button>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 };

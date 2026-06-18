@@ -93,39 +93,57 @@ export const LoginPage = () => {
   };
 
   return (
-    <div className="login-screen">
-      <div className="login-shell">
-        <header className="login-top-bar">
-          <div className="brand-block">
-            {hasCustomLogo ? (
-              <div className="brand-logo brand-logo-plain">
-                <img
-                  alt={branding.appName}
-                  className="brand-logo-image"
-                  onError={() => setLogoLoadFailed(true)}
-                  src={branding.logoUrl ?? undefined}
-                />
-              </div>
-            ) : null}
-            <span className="brand-name">{branding.appName}</span>
-          </div>
-        </header>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 py-10">
+      {/* Aurora blobs */}
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute -top-40 -right-20 h-80 w-80 rounded-full bg-violet-200/30 blur-3xl" />
+        <div className="absolute -bottom-40 -left-20 h-80 w-80 rounded-full bg-blue-200/25 blur-3xl" />
+        <div className="absolute top-1/2 right-0 h-48 w-48 rounded-full bg-sky-200/20 blur-3xl" />
+      </div>
 
-        <main className="login-card">
-          <section className="login-hero">
-            <h1>Bienvenido</h1>
-            <p>Ingresa tus credenciales para acceder al seguimiento de tu familia.</p>
-          </section>
+      <div className="w-full max-w-sm">
+        {/* Brand */}
+        <div className="mb-8 flex flex-col items-center gap-3">
+          {hasCustomLogo ? (
+            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
+              <img
+                alt={branding.appName}
+                className="h-full w-full object-contain"
+                onError={() => setLogoLoadFailed(true)}
+                src={branding.logoUrl ?? undefined}
+              />
+            </div>
+          ) : (
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--primary)] shadow-lg">
+              <MaterialIcon name="fitness_center" filled className="text-2xl text-white" />
+            </div>
+          )}
+          <h1 className="text-lg font-bold text-slate-900">{branding.appName}</h1>
+        </div>
 
-          <form className="login-form" onSubmit={handleSubmit}>
-            <div className="field-group">
-              <label htmlFor="email">EMAIL O ID DE PADRE</label>
-              <div className="field-shell">
-                <MaterialIcon className="field-icon" name="mail" />
+        {/* Card */}
+        <div className="rounded-3xl bg-white p-6 shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
+          <h2 className="text-xl font-bold text-slate-900">Bienvenido</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Ingresa tus credenciales para acceder al seguimiento de tu familia.
+          </p>
+
+          <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+            {/* Email */}
+            <div>
+              <label
+                className="text-[10px] font-semibold uppercase tracking-wider text-slate-400"
+                htmlFor="email"
+              >
+                Email
+              </label>
+              <div className="mt-1 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition-colors focus-within:border-[var(--primary)] focus-within:bg-white">
+                <MaterialIcon name="mail" className="text-base text-slate-400" />
                 <input
                   autoComplete="email"
+                  className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   id="email"
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="ejemplo@correo.com"
                   required
                   type="email"
@@ -134,62 +152,83 @@ export const LoginPage = () => {
               </div>
             </div>
 
-            <div className="field-group">
-              <div className="field-label-row">
-                <label htmlFor="password">CONTRASENA</label>
-                <button className="link-like" type="button">
-                  Olvidaste tu contrasena?
+            {/* Password */}
+            <div>
+              <div className="flex items-center justify-between">
+                <label
+                  className="text-[10px] font-semibold uppercase tracking-wider text-slate-400"
+                  htmlFor="password"
+                >
+                  Contraseña
+                </label>
+                <button className="text-xs font-medium text-[var(--primary)]" type="button">
+                  ¿Olvidaste?
                 </button>
               </div>
-              <div className="field-shell">
-                <MaterialIcon className="field-icon" name="lock" />
+              <div className="mt-1 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition-colors focus-within:border-[var(--primary)] focus-within:bg-white">
+                <MaterialIcon name="lock" className="text-base text-slate-400" />
                 <input
                   autoComplete="current-password"
+                  className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   id="password"
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="........"
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
                   required
                   type={showPassword ? "text" : "password"}
                   value={password}
                 />
                 <button
-                  aria-label={showPassword ? "Ocultar contrasena" : "Mostrar contrasena"}
-                  className="eye-btn"
-                  onClick={() => setShowPassword((value) => !value)}
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  className="text-slate-400 transition-colors hover:text-slate-600"
+                  onClick={() => setShowPassword((v) => !v)}
                   type="button"
                 >
-                  <MaterialIcon name={showPassword ? "visibility_off" : "visibility"} />
+                  <MaterialIcon name={showPassword ? "visibility_off" : "visibility"} className="text-base" />
                 </button>
               </div>
             </div>
 
-            <label className="remember-row">
+            {/* Remember */}
+            <label className="flex cursor-pointer items-center gap-2.5">
               <input
                 checked={remember}
-                onChange={(event) => setRemember(event.target.checked)}
+                className="accent-[var(--primary)] h-4 w-4 rounded"
+                onChange={(e) => setRemember(e.target.checked)}
                 type="checkbox"
               />
-              <span>Mantener sesion iniciada</span>
+              <span className="text-sm text-slate-600">Mantener sesión iniciada</span>
             </label>
 
-            {error && <p className="error-text">{error}</p>}
+            {error && (
+              <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+            )}
 
-            <button className="primary-cta" disabled={!canSubmit} type="submit">
-              {loading ? "Ingresando..." : "Iniciar Sesion"}
-              <MaterialIcon name="arrow_forward" />
+            <button
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-[var(--primary)] py-4 text-sm font-semibold text-white shadow-lg transition-opacity disabled:opacity-50"
+              disabled={!canSubmit}
+              type="submit"
+            >
+              {loading ? "Ingresando..." : "Iniciar Sesión"}
+              <MaterialIcon name="arrow_forward" className="text-base" />
             </button>
           </form>
 
-          <p className="login-footer">
-            Nuevo en la familia? <button type="button">Contacta con tu asesor</button>
+          <p className="mt-6 text-center text-sm text-slate-500">
+            ¿Nuevo en la familia?{" "}
+            <button className="font-semibold text-[var(--primary)]" type="button">
+              Contactá a tu asesor
+            </button>
           </p>
+        </div>
 
-          <div className="login-divider" />
-
-          <button className="demo-chip" onClick={autofillDemo} type="button">
-            Usar Credenciales DEMO
-          </button>
-        </main>
+        {/* Demo chip */}
+        <button
+          className="mt-3 w-full rounded-full border border-slate-200 bg-white/70 py-3 text-sm font-medium text-slate-500 backdrop-blur-sm transition-colors hover:bg-white"
+          onClick={autofillDemo}
+          type="button"
+        >
+          Usar Credenciales DEMO
+        </button>
       </div>
     </div>
   );

@@ -8,7 +8,8 @@
         "ui": "modules/students/client/StudentModule.tsx"
     },
     "migrations": [
-        "migrations/001_init_students.sql"
+        "migrations/001_init_students.sql",
+        "migrations/002_report_rating.sql"
     ],
     "api": {
         "basePath": "/api/students",

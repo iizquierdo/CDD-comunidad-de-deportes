@@ -82,9 +82,31 @@ app.get(/^\/storage\/(.+)/, async (req, res) => {
     }
 });
 
-app.get('/api/public/core', async (_req, res) => {
+app.get('/api/public/core', async (req, res) => {
   try {
     const payload = await loadPublicCorePayload(prisma, pool);
+
+    const tenantId = String(req.headers['x-tenant-id'] || '').trim();
+    if (tenantId) {
+      try {
+        const result = await pool.query(
+          `SELECT "appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor" FROM "Organization" WHERE id = $1 LIMIT 1`,
+          [tenantId]
+        );
+        const org = result.rows[0];
+        if (org) {
+          if (org.appName) (payload as Record<string, unknown>).appName = org.appName;
+          if (org.logoUrl) (payload as Record<string, unknown>).logoUrl = org.logoUrl;
+          if (org.isologoUrl) (payload as Record<string, unknown>).isologoUrl = org.isologoUrl;
+          if (org.faviconUrl) (payload as Record<string, unknown>).faviconUrl = org.faviconUrl;
+          if (org.primaryColor) (payload as Record<string, unknown>).primaryColor = org.primaryColor;
+          if (org.secondaryColor) (payload as Record<string, unknown>).secondaryColor = org.secondaryColor;
+        }
+      } catch {
+        // Fall back to platform defaults on any org lookup error
+      }
+    }
+
     res.json(payload);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to read public core settings', details: error?.message || String(error) });
@@ -214,7 +236,8 @@ const DEFAULT_MENU_ITEMS: Array<{
         { groupKey: 'settings', label: 'Storage', icon: 'fa-database', targetType: 'STATIC_VIEW', viewKey: 'StorageSettings', sortOrder: 80 },
         { groupKey: 'settings', label: 'Categories', icon: 'fa-tags', targetType: 'STATIC_VIEW', viewKey: 'CategorySettings', sortOrder: 90 },
         { groupKey: 'settings', label: 'References', icon: 'fa-hashtag', targetType: 'STATIC_VIEW', viewKey: 'ReferenceSettings', sortOrder: 100 },
-        { groupKey: 'settings', label: 'Menus', icon: 'fa-bars-staggered', targetType: 'STATIC_VIEW', viewKey: 'MenuSettings', sortOrder: 110 }
+        { groupKey: 'settings', label: 'Menus', icon: 'fa-bars-staggered', targetType: 'STATIC_VIEW', viewKey: 'MenuSettings', sortOrder: 110 },
+        { groupKey: 'settings', label: 'App Branding', icon: 'fa-palette', targetType: 'STATIC_VIEW', viewKey: 'AppBrandingSettings', sortOrder: 120 }
     ];
 
 const normalizeMenuPlacement = (value: unknown): MenuPlacement => {
@@ -495,6 +518,14 @@ const ensureOrganizationColumns = async () => {
     await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "state" TEXT');
     await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "country" TEXT');
     await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "baseCurrency" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "appName" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "logoUrl" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "isologoUrl" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "faviconUrl" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "primaryColor" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "secondaryColor" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "backgroundImageUrl" TEXT');
+    await pool.query('ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "slogan" TEXT');
 
     try {
         await ensureAdminSupportTables(pool);
@@ -692,6 +723,12 @@ const moduleAuthorizationMiddleware = (moduleCode: string) => {
 
             const legacyRole = String(user.role || '').trim().toLowerCase();
             if (legacyRole === 'administrator' || legacyRole === 'admin') {
+                return next();
+            }
+
+            // Professors and sede admins can create/edit/delete their own community posts
+            const isProfesor = legacyRole === 'profesor' || legacyRole === 'professor' || legacyRole === 'admin sede';
+            if (isProfesor && String(moduleCode || '').toUpperCase() === 'COMMUNITIES') {
                 return next();
             }
 
@@ -991,6 +1028,101 @@ app.put('/api/organization', async (req, res) => {
     }
 });
 
+
+// --- Organization Branding API (tenant) ---
+
+const isLikelyColor = (v: string) => /^#[0-9a-fA-F]{3,8}$|^rgb|^hsl/.test(v.trim());
+
+app.get('/api/organization/branding', async (req, res) => {
+    try {
+        const ctx = await loadTenantAuthContext(req, res);
+        if (!ctx) return;
+        await ensureOrganizationColumns();
+        const result = await pool.query(
+            `SELECT "appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
+            [ctx.organizationId]
+        );
+        res.json(result.rows[0] || {});
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch branding', details: error.message });
+    }
+});
+
+app.put('/api/organization/branding', async (req, res) => {
+    try {
+        const ctx = await loadTenantAuthContext(req, res);
+        if (!ctx) return;
+        await ensureOrganizationColumns();
+        const body = req.body || {};
+        const data: Record<string, unknown> = {};
+        if (body.appName !== undefined) {
+            const v = String(body.appName ?? '').trim().slice(0, 200);
+            data.appName = v || null;
+        }
+        for (const key of ['logoUrl', 'isologoUrl', 'faviconUrl', 'backgroundImageUrl'] as const) {
+            if (body[key] !== undefined) {
+                const v = String(body[key] ?? '').trim();
+                data[key] = v ? v.slice(0, 2000) : null;
+            }
+        }
+        for (const key of ['primaryColor', 'secondaryColor'] as const) {
+            if (body[key] !== undefined) {
+                const v = String(body[key] ?? '').trim();
+                if (v && !isLikelyColor(v)) return res.status(400).json({ error: `Invalid ${key}` });
+                data[key] = v || null;
+            }
+        }
+        if (body.slogan !== undefined) {
+            const v = String(body.slogan ?? '').trim().slice(0, 300);
+            data.slogan = v || null;
+        }
+        if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No fields to update' });
+        const keys = Object.keys(data);
+        const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
+        await pool.query(
+            `UPDATE "Organization" SET ${setClause}, "updatedAt" = NOW() WHERE id = $${keys.length + 1}`,
+            [...Object.values(data), ctx.organizationId]
+        );
+        const result = await pool.query(
+            `SELECT "appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
+            [ctx.organizationId]
+        );
+        res.json(result.rows[0] || {});
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to update branding', details: error.message });
+    }
+});
+
+app.post('/api/organization/branding/upload', upload.single('file'), async (req, res) => {
+    try {
+        const ctx = await loadTenantAuthContext(req, res);
+        if (!ctx) return;
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: 'No file uploaded' });
+        const type = String(req.body?.type || '').trim().toLowerCase();
+        if (!['logourl', 'isologourl', 'faviconurl', 'backgroundimageurl'].includes(type)) {
+            return res.status(400).json({ error: 'type must be logoUrl, isologoUrl, faviconUrl, or backgroundImageUrl' });
+        }
+        const fieldMap: Record<string, string> = { logourl: 'logoUrl', isologourl: 'isologoUrl', faviconurl: 'faviconUrl', backgroundimageurl: 'backgroundImageUrl' };
+        const field = fieldMap[type];
+        const ext = path.extname(file.originalname) || (type === 'faviconurl' ? '.ico' : '.png');
+        const filename = `${type}_${ctx.organizationId.slice(0, 8)}_${Date.now()}${ext}`;
+        const { url } = await putObject({
+            pool,
+            key: `orgs/${ctx.organizationId}/${filename}`,
+            buffer: file.buffer,
+            contentType: file.mimetype
+        });
+        await ensureOrganizationColumns();
+        await pool.query(
+            `UPDATE "Organization" SET "${field}" = $1, "updatedAt" = NOW() WHERE id = $2`,
+            [url, ctx.organizationId]
+        );
+        res.json({ success: true, url, type: field });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to upload branding asset', details: error.message });
+    }
+});
 
 app.get('/api/smtp-config', async (req, res) => {
     try {

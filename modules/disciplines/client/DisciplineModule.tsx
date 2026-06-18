@@ -45,6 +45,7 @@ interface DisciplineItem {
 
 interface ResourceItem {
   id: string;
+  disciplineId: string;
   title: string;
   description?: string | null;
   type: string;
@@ -123,10 +124,18 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
   const logoFileRef = useRef<HTMLInputElement>(null);
   const coverFileRef = useRef<HTMLInputElement>(null);
 
-  // Resource modal
+  // Resource modal (per-discipline, used in details view)
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
   const [resourceForm, setResourceForm] = useState({ title: '', description: '', type: 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
   const resourceFileRef = useRef<HTMLInputElement>(null);
+
+  // Global resource ABM (used in resources library view)
+  const globalResourceFileRef = useRef<HTMLInputElement>(null);
+  const [resourceSearch, setResourceSearch] = useState('');
+  const [resourceSorting, setResourceSorting] = useState<SortingState>([]);
+  const [globalResourceModalOpen, setGlobalResourceModalOpen] = useState(false);
+  const [editingGlobalResourceId, setEditingGlobalResourceId] = useState<string | null>(null);
+  const [globalResourceForm, setGlobalResourceForm] = useState({ disciplineId: '', title: '', description: '', type: 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
 
   // Classes ABM (scoped to the current discipline)
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -210,6 +219,7 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
       else setView('Disciplines');
     } else if (view === 'resources') {
       void loadAllResources();
+      void loadDisciplines();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, recordId]);
@@ -340,6 +350,75 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
       body: JSON.stringify({ updatedById: userId })
     });
     await loadDetails(selected.id);
+  };
+
+  // ---- Global resources ABM (library view) ----------------------------------
+  const openCreateGlobalResource = () => {
+    setEditingGlobalResourceId(null);
+    setGlobalResourceForm({ disciplineId: disciplines[0]?.id || '', title: '', description: '', type: typeOptions[0] || 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
+    if (globalResourceFileRef.current) globalResourceFileRef.current.value = '';
+    setGlobalResourceModalOpen(true);
+  };
+
+  const openEditGlobalResource = (r: ResourceItem) => {
+    setEditingGlobalResourceId(r.id);
+    setGlobalResourceForm({ disciplineId: r.disciplineId, title: r.title, description: r.description || '', type: r.type, visibility: r.visibility, resourceUrl: r.resourceUrl || '' });
+    if (globalResourceFileRef.current) globalResourceFileRef.current.value = '';
+    setGlobalResourceModalOpen(true);
+  };
+
+  const submitGlobalResource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userId) return setError(t('disciplines.errorAuthRequired'));
+    if (!globalResourceForm.title.trim() || !globalResourceForm.disciplineId) return;
+    try {
+      const file = globalResourceFileRef.current?.files?.[0];
+      let res: Response;
+      if (editingGlobalResourceId) {
+        res = await fetch(`/api/disciplines/${globalResourceForm.disciplineId}/resources/${editingGlobalResourceId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...globalResourceForm, updatedById: userId })
+        });
+      } else if (file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('title', globalResourceForm.title);
+        fd.append('description', globalResourceForm.description);
+        fd.append('type', globalResourceForm.type);
+        fd.append('visibility', globalResourceForm.visibility);
+        fd.append('createdById', userId);
+        res = await fetch(`/api/disciplines/${globalResourceForm.disciplineId}/resources/upload`, { method: 'POST', body: fd });
+      } else {
+        res = await fetch(`/api/disciplines/${globalResourceForm.disciplineId}/resources`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...globalResourceForm, createdById: userId, updatedById: userId })
+        });
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || t('disciplines.errorSave'));
+      }
+      setGlobalResourceModalOpen(false);
+      await loadAllResources();
+    } catch (e: any) {
+      setError(e.message || t('disciplines.errorSave'));
+    }
+  };
+
+  const deleteGlobalResource = async (r: ResourceItem) => {
+    if (!confirm(t('disciplines.deleteConfirm'))) return;
+    try {
+      await fetch(`/api/disciplines/${r.disciplineId}/resources/${r.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updatedById: userId })
+      });
+      await loadAllResources();
+    } catch {
+      setError(t('disciplines.errorSave'));
+    }
   };
 
   // ---- Classes ABM ----------------------------------------------------------
@@ -546,6 +625,90 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
     getSortedRowModel: getSortedRowModel()
   });
 
+  // ---- Resources library table -----------------------------------------------
+  const filteredAllResources = useMemo(() => {
+    const q = resourceSearch.trim().toLowerCase();
+    if (!q) return allResources;
+    return allResources.filter(
+      (r) => r.title.toLowerCase().includes(q) || (r.disciplineName || '').toLowerCase().includes(q)
+    );
+  }, [allResources, resourceSearch]);
+
+  const resourceColumns = useMemo<ColumnDef<ResourceItem & { disciplineName?: string }>[]>(
+    () => [
+      {
+        id: 'discipline',
+        accessorFn: (row) => row.disciplineName || '—',
+        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.discipline')} />,
+        cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.original.disciplineName || '—'}</span>
+      },
+      {
+        id: 'title',
+        accessorFn: (row) => row.title,
+        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.resourceTitle')} />,
+        cell: ({ row }) => (
+          <div>
+            <p className="text-sm font-semibold text-foreground">{row.original.title}</p>
+            {row.original.description && <p className="text-[11px] text-muted-foreground">{row.original.description}</p>}
+          </div>
+        )
+      },
+      {
+        id: 'type',
+        accessorFn: (row) => row.type,
+        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.type')} />,
+        cell: ({ row }) => <span className="text-xs text-muted-foreground">{labelize(row.original.type)}</span>
+      },
+      {
+        id: 'visibility',
+        accessorFn: (row) => row.visibility,
+        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.visibility')} />,
+        cell: ({ row }) => <span className="text-xs text-muted-foreground">{labelize(row.original.visibility)}</span>
+      },
+      {
+        id: 'actions',
+        enableSorting: false,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        header: () => (
+          <span className="inline-flex w-full justify-end text-[0.8125rem] font-medium uppercase tracking-wide text-table-header-foreground">
+            {t('disciplines.actions')}
+          </span>
+        ),
+        cell: ({ row }) => {
+          const r = row.original;
+          return (
+            <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+              {r.resourceUrl && (
+                <a href={r.resourceUrl} target="_blank" rel="noreferrer">
+                  <Button type="button" mode="icon" size="sm" variant="outline" className="size-8" aria-label={t('disciplines.open')}>
+                    <i className="fa-solid fa-up-right-from-square text-[11px]" />
+                  </Button>
+                </a>
+              )}
+              <Button type="button" mode="icon" size="sm" variant="outline" className="size-8" onClick={() => openEditGlobalResource(r)} aria-label={t('disciplines.edit')}>
+                <Pencil className="size-3.5" />
+              </Button>
+              <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 text-destructive hover:bg-destructive/10" onClick={() => deleteGlobalResource(r)} aria-label={t('disciplines.delete')}>
+                <i className="fa-solid fa-trash text-[11px]" />
+              </Button>
+            </div>
+          );
+        }
+      }
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t]
+  );
+
+  const resourceTable = useReactTable({
+    data: filteredAllResources,
+    columns: resourceColumns,
+    state: { sorting: resourceSorting },
+    onSortingChange: setResourceSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel()
+  });
+
   // ---- Render ---------------------------------------------------------------
   const primaryBtn =
     'px-5 py-2.5 bg-red-500 hover:bg-red-600 active:scale-[0.98] transition-all text-white rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2';
@@ -553,46 +716,65 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
     'px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all';
 
   if (view === 'resources') {
-    const grouped: Record<string, (ResourceItem & { disciplineName?: string })[]> = {};
-    for (const r of allResources) {
-      const key = r.disciplineName || '—';
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push(r);
-    }
     return (
-      <div className="space-y-6 animate-in fade-in duration-300 pb-10">
-        <div>
-          <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">{t('disciplines.resourcesTitle')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('disciplines.resourceLibraryDesc')}</p>
-        </div>
-        {allResourcesLoading && (
-          <div className="py-12 text-center text-sm text-slate-400">{t('disciplines.loading')}</div>
+      <>
+        {error && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</div>}
+
+        <ListCard<ResourceItem & { disciplineName?: string }>
+          title={t('disciplines.resourcesTitle')}
+          description={t('disciplines.resourceLibraryDesc')}
+          cardTitle={t('disciplines.resourcesTitle')}
+          searchPlaceholder={t('disciplines.searchResourcesPlaceholder')}
+          searchTerm={resourceSearch}
+          onSearchChange={setResourceSearch}
+          primaryLabel={t('disciplines.newResource')}
+          onPrimary={openCreateGlobalResource}
+          table={resourceTable}
+          recordCount={filteredAllResources.length}
+          isLoading={allResourcesLoading}
+          emptyMessage={t('disciplines.noResources')}
+        />
+
+        {globalResourceModalOpen && (
+          <Modal onClose={() => setGlobalResourceModalOpen(false)} title={editingGlobalResourceId ? t('disciplines.editResource') : t('disciplines.newResource')}>
+            <form onSubmit={submitGlobalResource} className="space-y-4">
+              <Field label={t('disciplines.discipline')}>
+                <select className={inputClass} value={globalResourceForm.disciplineId} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, disciplineId: e.target.value })} required>
+                  <option value="">—</option>
+                  {disciplines.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </Field>
+              <Field label={t('disciplines.resourceTitle')}>
+                <input className={inputClass} value={globalResourceForm.title} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, title: e.target.value })} required />
+              </Field>
+              <Field label={t('disciplines.descriptionLabel')}>
+                <textarea className={inputClass} rows={2} value={globalResourceForm.description} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, description: e.target.value })} />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t('disciplines.type')}>
+                  <select className={inputClass} value={globalResourceForm.type} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, type: e.target.value })}>
+                    {typeOptions.map((x) => <option key={x} value={x}>{labelize(x)}</option>)}
+                  </select>
+                </Field>
+                <Field label={t('disciplines.visibility')}>
+                  <select className={inputClass} value={globalResourceForm.visibility} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, visibility: e.target.value })}>
+                    {visibilityOptions.map((x) => <option key={x} value={x}>{labelize(x)}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <Field label={t('disciplines.url')}>
+                <input className={inputClass} value={globalResourceForm.resourceUrl} onChange={(e) => setGlobalResourceForm({ ...globalResourceForm, resourceUrl: e.target.value })} placeholder="https://..." />
+              </Field>
+              {!editingGlobalResourceId && (
+                <Field label={t('disciplines.uploadFile')}>
+                  <input ref={globalResourceFileRef} type="file" className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-bold file:uppercase" />
+                </Field>
+              )}
+              <ModalActions onCancel={() => setGlobalResourceModalOpen(false)} cancelLabel={t('disciplines.cancel')} saveLabel={t('disciplines.save')} />
+            </form>
+          </Modal>
         )}
-        {!allResourcesLoading && allResources.length === 0 && (
-          <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">{t('disciplines.noResources')}</p>
-        )}
-        {!allResourcesLoading && Object.entries(grouped).map(([disciplineName, items]) => (
-          <div key={disciplineName} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
-              <i className="fa-solid fa-dumbbell" /> {disciplineName}
-            </h3>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {items.map((r) => (
-                <div key={r.id} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-semibold text-slate-900">{r.title}</p>
-                  <p className="text-xs text-slate-400">{labelize(r.type)} · {labelize(r.visibility)}</p>
-                  {r.description && <p className="mt-1 text-xs text-slate-500">{r.description}</p>}
-                  {r.resourceUrl && (
-                    <a href={r.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-red-500 hover:text-red-600">
-                      <i className="fa-solid fa-up-right-from-square" /> {t('disciplines.open')}
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+      </>
     );
   }
 

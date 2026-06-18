@@ -660,12 +660,13 @@ const App: React.FC = () => {
                 activeModuleCodes={readableModuleCodes}
               />
             )}
+            {currentView === 'AppBrandingSettings' && <SettingsModule view="AppBranding" />}
 
       {![
         'Dashboard', 'Projects', 'Social', 'Profile', 'Tickets', 'Users',
         'Roles', 'Subscriptions', 'FileManager', 'Inbox', 'Chat', 'Calendar',
         'FAQ', 'Invoices', 'CreateInvoice', 'InvoiceDetail', ...dynamicModuleViewNames,
-        'OrganizationSettings', 'MyPlanSettings', 'CompanySettings', 'SMTPSettings', 'LanguageSettings', 'BackupSettings', 'PaymentSettings', 'UserSettings', 'RoleSettings', 'ModuleSettings', 'CategorySettings', 'ReferenceSettings', 'StorageSettings', 'MenuSettings'
+        'OrganizationSettings', 'MyPlanSettings', 'CompanySettings', 'SMTPSettings', 'LanguageSettings', 'BackupSettings', 'PaymentSettings', 'UserSettings', 'RoleSettings', 'ModuleSettings', 'CategorySettings', 'ReferenceSettings', 'StorageSettings', 'MenuSettings', 'AppBrandingSettings'
       ].includes(currentView) && (
         <div className="text-muted-foreground flex h-[60vh] flex-col items-center justify-center">
           <i className="fa-solid fa-rocket mb-4 text-6xl opacity-20"></i>

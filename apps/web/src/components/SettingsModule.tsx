@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import UserManagement from './UserManagement';
@@ -82,8 +82,265 @@ interface CategoryItem {
     isSystem?: boolean;
 }
 
+// ─── App Branding Section ────────────────────────────────────────────────────
+
+interface OrgBranding {
+    appName: string | null;
+    slogan: string | null;
+    logoUrl: string | null;
+    isologoUrl: string | null;
+    faviconUrl: string | null;
+    backgroundImageUrl: string | null;
+    primaryColor: string | null;
+    secondaryColor: string | null;
+}
+
+const EMPTY_BRANDING: OrgBranding = { appName: null, slogan: null, logoUrl: null, isologoUrl: null, faviconUrl: null, backgroundImageUrl: null, primaryColor: null, secondaryColor: null };
+
+const isLikelyColor = (v: string) => /^#[0-9a-fA-F]{3,8}$|^rgb|^hsl/.test(v.trim());
+
+const AppBrandingSection: React.FC = () => {
+    const [branding, setBranding] = useState<OrgBranding>(EMPTY_BRANDING);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [uploading, setUploading] = useState<string | null>(null);
+    const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setStatus(null);
+        try {
+            const res = await fetch('/api/organization/branding');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data?.error || 'Error al cargar');
+            setBranding({ ...EMPTY_BRANDING, ...data });
+        } catch (e: unknown) {
+            setStatus({ type: 'error', message: e instanceof Error ? e.message : 'No se pudo cargar la configuración' });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { void load(); }, [load]);
+
+    const update = <K extends keyof OrgBranding>(key: K, value: OrgBranding[K]) =>
+        setBranding(prev => ({ ...prev, [key]: value }));
+
+    const save = async () => {
+        setSaving(true);
+        setStatus(null);
+        try {
+            const res = await fetch('/api/organization/branding', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    appName: branding.appName || null,
+                    slogan: branding.slogan || null,
+                    logoUrl: branding.logoUrl || null,
+                    isologoUrl: branding.isologoUrl || null,
+                    faviconUrl: branding.faviconUrl || null,
+                    backgroundImageUrl: branding.backgroundImageUrl || null,
+                    primaryColor: branding.primaryColor || null,
+                    secondaryColor: branding.secondaryColor || null,
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data?.error || 'Guardar falló');
+            setBranding({ ...EMPTY_BRANDING, ...data });
+            setStatus({ type: 'success', message: 'Configuración guardada.' });
+        } catch (e: unknown) {
+            setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Guardar falló' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const uploadAsset = async (type: 'logoUrl' | 'isologoUrl' | 'faviconUrl' | 'backgroundImageUrl', file: File) => {
+        setUploading(type);
+        setStatus(null);
+        try {
+            const fd = new FormData();
+            fd.append('type', type);
+            fd.append('file', file);
+            const res = await fetch('/api/organization/branding/upload', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data?.error || 'Upload falló');
+            update(type, data.url);
+            const labels: Record<string, string> = { logoUrl: 'Logo', isologoUrl: 'Isologo', faviconUrl: 'Favicon', backgroundImageUrl: 'Imagen de fondo' };
+            setStatus({ type: 'success', message: `${labels[type]} subido.` });
+        } catch (e: unknown) {
+            setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Upload falló' });
+        } finally {
+            setUploading(null);
+        }
+    };
+
+    const inputClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+
+    return (
+        <div className="w-full animate-in fade-in duration-500 pb-20">
+            <div className="mb-8">
+                <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">Configuración de la App</h2>
+                <p className="mt-1 text-sm font-medium text-slate-500">Personaliza el nombre, logos, colores y apariencia de tu aplicación.</p>
+            </div>
+
+            {status && (
+                <div className={`mb-4 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium ${status.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
+                    {status.type === 'success' ? '✓' : '✕'} {status.message}
+                </div>
+            )}
+
+            <div className="space-y-6">
+                {/* Identidad */}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-base font-semibold text-slate-800">Identidad</h3>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-1">
+                            <label className="text-sm font-semibold text-slate-700">Nombre de la aplicación</label>
+                            <input
+                                type="text"
+                                value={branding.appName ?? ''}
+                                placeholder="Ej: Aqua Club"
+                                onChange={e => update('appName', e.target.value || null)}
+                                disabled={loading}
+                                className={inputClass}
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-sm font-semibold text-slate-700">Slogan</label>
+                            <input
+                                type="text"
+                                value={branding.slogan ?? ''}
+                                placeholder="Ej: Nadamos juntos hacia el éxito"
+                                onChange={e => update('slogan', e.target.value || null)}
+                                disabled={loading}
+                                className={inputClass}
+                            />
+                            <p className="text-xs text-slate-400">Se muestra debajo del nombre en la pantalla de acceso.</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Logos */}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-base font-semibold text-slate-800">Logos e íconos</h3>
+                    <div className="grid gap-4 sm:grid-cols-3">
+                        {([
+                            { key: 'logoUrl', label: 'Logo', accept: 'image/*', hint: 'PNG o SVG recomendado' },
+                            { key: 'isologoUrl', label: 'Isologo', accept: 'image/*', hint: 'Versión compacta (icono + texto)' },
+                            { key: 'faviconUrl', label: 'Favicon', accept: '.ico,image/png,image/svg+xml', hint: 'Icono de pestaña del navegador' },
+                        ] as const).map(({ key, label, accept, hint }) => (
+                            <div key={key} className="space-y-2">
+                                <label className="text-sm font-semibold text-slate-700">{label}</label>
+                                <input
+                                    type="file"
+                                    accept={accept}
+                                    disabled={!!uploading || loading}
+                                    className="w-full text-xs text-slate-600 file:mr-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium"
+                                    onChange={e => {
+                                        const f = e.target.files?.[0];
+                                        e.target.value = '';
+                                        if (f) void uploadAsset(key, f);
+                                    }}
+                                />
+                                {uploading === key && <p className="text-xs text-blue-600">Subiendo…</p>}
+                                {branding[key] ? (
+                                    <div className="flex items-center gap-2">
+                                        <img src={branding[key]!} alt={label} className="h-12 max-w-[120px] rounded border object-contain p-1" />
+                                        <button onClick={() => update(key, null)} className="text-xs text-red-500 hover:underline">Quitar</button>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-slate-400">{hint}</p>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Imagen de fondo */}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-1 text-base font-semibold text-slate-800">Imagen de fondo</h3>
+                    <p className="mb-4 text-xs text-slate-400">Se muestra como fondo en la pantalla de acceso. Recomendado: 1920×1080 px.</p>
+                    <input
+                        type="file"
+                        accept="image/*"
+                        disabled={!!uploading || loading}
+                        className="w-full text-xs text-slate-600 file:mr-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium"
+                        onChange={e => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            if (f) void uploadAsset('backgroundImageUrl', f);
+                        }}
+                    />
+                    {uploading === 'backgroundImageUrl' && <p className="mt-1 text-xs text-blue-600">Subiendo…</p>}
+                    {branding.backgroundImageUrl ? (
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <img src={branding.backgroundImageUrl} alt="Fondo" className="h-28 max-w-full rounded border object-cover sm:max-w-[360px]" />
+                            <button onClick={() => update('backgroundImageUrl', null)} className="text-xs text-red-500 hover:underline">Quitar imagen</button>
+                        </div>
+                    ) : (
+                        <p className="mt-1 text-xs text-slate-400">Sin imagen de fondo configurada.</p>
+                    )}
+                </div>
+
+                {/* Colores */}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="mb-4 text-base font-semibold text-slate-800">Colores</h3>
+                    <div className="grid gap-6 sm:grid-cols-2">
+                        {([
+                            { key: 'primaryColor', label: 'Color primario', placeholder: '#3b82f6', desc: 'Color principal de botones y elementos de acción.' },
+                            { key: 'secondaryColor', label: 'Color secundario', placeholder: '#f4f4f5', desc: 'Color de acento y elementos secundarios.' },
+                        ] as const).map(({ key, label, placeholder, desc }) => (
+                            <div key={key} className="space-y-2">
+                                <label className="text-sm font-semibold text-slate-700">{label}</label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="color"
+                                        value={branding[key] ?? '#ffffff'}
+                                        onChange={e => update(key, e.target.value)}
+                                        disabled={loading}
+                                        className="h-9 w-12 cursor-pointer rounded border border-slate-200 bg-transparent p-0.5"
+                                    />
+                                    <input
+                                        type="text"
+                                        value={branding[key] ?? ''}
+                                        placeholder={placeholder}
+                                        onChange={e => {
+                                            const v = e.target.value;
+                                            if (!v || isLikelyColor(v)) update(key, v || null);
+                                            else update(key, v);
+                                        }}
+                                        disabled={loading}
+                                        className={`${inputClass} font-mono`}
+                                    />
+                                    {branding[key] && (
+                                        <button onClick={() => update(key, null)} className="text-xs text-slate-400 hover:text-red-500">✕</button>
+                                    )}
+                                </div>
+                                <p className="text-xs text-slate-400">{desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="flex justify-end">
+                    <button
+                        onClick={() => void save()}
+                        disabled={saving || loading}
+                        className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                        {saving ? 'Guardando…' : 'Guardar cambios'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface SettingsModuleProps {
-    view: 'Organization' | 'MyPlan' | 'Companies' | 'SMTP' | 'Languages' | 'Backup' | 'Payments' | 'Users' | 'Categories' | 'References' | 'RoleSettings' | 'ModuleSettings' | 'Storage' | 'Menus';
+    view: 'Organization' | 'MyPlan' | 'Companies' | 'SMTP' | 'Languages' | 'Backup' | 'Payments' | 'Users' | 'Categories' | 'References' | 'RoleSettings' | 'ModuleSettings' | 'Storage' | 'Menus' | 'AppBranding';
     onSubTitleChange?: (subtitle: string) => void;
     companyFilter?: string;
     clientModules?: ModuleClientDefinition[];
@@ -1830,6 +2087,7 @@ const SettingsModule: React.FC<SettingsModuleProps> = ({ view, onSubTitleChange,
                     <MenuManagement clientModules={clientModules} activeModuleCodes={activeModuleCodes} />
                 </div>
             )}
+            {view === 'AppBranding' && <AppBrandingSection />}
 
             {isModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">

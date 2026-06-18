@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Independent service inside the Sinapsis monorepo. Runs on its own port and
 // proxies /api and /storage to the Sinapsis API (default :14000).
@@ -9,7 +10,7 @@ export default defineConfig(({ mode }) => {
   const port = Number(env.VITE_PORT || 13510);
 
   return {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     server: {
       host: "0.0.0.0",
       port,

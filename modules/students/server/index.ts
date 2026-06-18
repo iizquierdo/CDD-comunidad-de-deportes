@@ -21,6 +21,12 @@ const META_CODES = ['STUDENT_GENDER', 'STUDENT_STATUS', 'REPORT_TYPE', 'REPORT_S
 export default function registerStudentsModule({ app, pool }: StudentsModuleContext) {
   const router = express.Router();
 
+  // Ensure rating columns exist (idempotent — safe to run every startup)
+  void pool.query(`
+    ALTER TABLE "StudentReport" ADD COLUMN IF NOT EXISTS "rating" INTEGER CHECK ("rating" >= 1 AND "rating" <= 5);
+    ALTER TABLE "StudentReport" ADD COLUMN IF NOT EXISTS "ratingTheme" TEXT DEFAULT 'stars';
+  `).catch(() => { /* table may not exist yet during first install */ });
+
   const requesterId = (req: express.Request): string =>
     String((req as any).authUserId || getRequesterUserId(req) || '').trim();
 
@@ -352,7 +358,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
         extra = `AND r.status = 'PUBLISHED' AND r.visibility = 'TUTORS_ONLY'`;
       }
       const reports = await pool.query(
-        `SELECT r.*, a.name AS "authorName" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId"
+        `SELECT r.*, a.name AS "authorName", COALESCE(a."imageUrl", a.avatar) AS "authorAvatarUrl" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId"
          WHERE r."studentId" = $1 ${extra} ORDER BY r."createdAt" DESC`,
         params
       );
@@ -374,6 +380,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
 
       const id = crypto.randomUUID();
       const status = String(req.body?.status || 'DRAFT').trim();
+      // Base insert — always safe
       await pool.query(
         `INSERT INTO "StudentReport" (id, "studentId", "authorId", type, title, content, summary, "levelChangeId", visibility, status, "publishedAt", "createdAt", "updatedAt")
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
@@ -389,6 +396,15 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
           status === 'PUBLISHED' ? new Date() : (req.body?.publishedAt ? new Date(req.body.publishedAt) : null)
         ]
       );
+      // Rating — silently skipped if columns don't exist yet
+      if (req.body?.rating) {
+        const rating = Math.min(5, Math.max(1, parseInt(req.body.rating, 10)));
+        const ratingTheme = req.body?.ratingTheme ? String(req.body.ratingTheme).trim() : 'stars';
+        await pool.query(
+          `UPDATE "StudentReport" SET rating=$1, "ratingTheme"=$2 WHERE id=$3`,
+          [rating, ratingTheme, id]
+        ).catch(() => { /* columns not yet migrated — ignored */ });
+      }
       if (Array.isArray(req.body?.recipientIds)) {
         for (const rid of req.body.recipientIds) {
           const uid = String(rid || '').trim();
@@ -396,7 +412,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
           await pool.query('INSERT INTO "StudentReportRecipient" (id, "reportId", "userId", "createdAt") VALUES ($1,$2,$3,NOW()) ON CONFLICT ("reportId","userId") DO NOTHING', [crypto.randomUUID(), id, uid]);
         }
       }
-      const created = await pool.query('SELECT r.*, a.name AS "authorName" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId" WHERE r.id = $1', [id]);
+      const created = await pool.query('SELECT r.*, a.name AS "authorName", COALESCE(a."imageUrl", a.avatar) AS "authorAvatarUrl" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId" WHERE r.id = $1', [id]);
       res.status(201).json(created.rows[0]);
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to create report', details: error.message });
@@ -414,6 +430,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
       if (!scope || (!scope.isStaff && rep.authorId !== scope.userId)) return res.status(403).json({ error: 'Cannot edit this report.' });
 
       const status = req.body?.status !== undefined ? String(req.body.status).trim() : rep.status;
+      // Main update — always safe (no optional columns)
       await pool.query(
         `UPDATE "StudentReport" SET type=$1, title=$2, content=$3, summary=$4, "levelChangeId"=$5, visibility=$6, status=$7,
             "publishedAt"=$8, "updatedAt"=NOW() WHERE id=$9`,
@@ -429,7 +446,16 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
           reportId
         ]
       );
-      const updated = await pool.query('SELECT r.*, a.name AS "authorName" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId" WHERE r.id = $1', [reportId]);
+      // Rating update — only available after migration; silently skipped if columns don't exist yet
+      if (req.body?.rating !== undefined || req.body?.ratingTheme !== undefined) {
+        const rating = req.body.rating ? Math.min(5, Math.max(1, parseInt(req.body.rating, 10))) : null;
+        const ratingTheme = req.body.ratingTheme ? String(req.body.ratingTheme).trim() : 'stars';
+        await pool.query(
+          `UPDATE "StudentReport" SET rating=$1, "ratingTheme"=$2 WHERE id=$3`,
+          [rating, ratingTheme, reportId]
+        ).catch(() => { /* columns not yet migrated — ignored */ });
+      }
+      const updated = await pool.query('SELECT r.*, a.name AS "authorName", COALESCE(a."imageUrl", a.avatar) AS "authorAvatarUrl" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId" WHERE r.id = $1', [reportId]);
       res.json(updated.rows[0]);
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to update report', details: error.message });
@@ -452,6 +478,23 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
       res.json(updated.rows[0]);
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to update report status', details: error.message });
+    }
+  });
+
+  router.delete('/:id/reports/:reportId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      const { id: studentId, reportId } = req.params;
+      const existing = await pool.query('SELECT * FROM "StudentReport" WHERE id = $1 AND "studentId" = $2 LIMIT 1', [reportId, studentId]);
+      const rep = existing.rows[0];
+      if (!rep) return res.status(404).json({ error: 'Report not found' });
+      if (!scope || (!scope.isStaff && rep.authorId !== scope.userId)) return res.status(403).json({ error: 'Cannot delete this report.' });
+      await pool.query('DELETE FROM "StudentReportRecipient" WHERE "reportId" = $1', [reportId]);
+      await pool.query('DELETE FROM "StudentReport" WHERE id = $1', [reportId]);
+      res.status(204).end();
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to delete report', details: error.message });
     }
   });
 

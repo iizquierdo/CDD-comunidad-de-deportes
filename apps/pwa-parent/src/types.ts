@@ -210,6 +210,8 @@ export interface StudentReport {
   visibility: string;
   publishedAt?: string | null;
   createdAt: string;
+  rating?: number | null;
+  ratingTheme?: string | null;
   author: UserRef;
   recipients?: Array<{ user: UserRef }>;
 }

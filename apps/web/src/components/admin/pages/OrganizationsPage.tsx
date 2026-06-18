@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   type ColumnDef,
@@ -7,7 +8,7 @@ import {
   getSortedRowModel,
   useReactTable
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle2, Pencil, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ExternalLink, Paintbrush, Pencil, Search, Trash2 } from 'lucide-react';
 import { adminFetch } from '../api';
 import { Alert, AlertContent, AlertDescription, AlertIcon } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -88,6 +89,7 @@ const emptyForm = (): Partial<OrganizationRow> => ({
 
 const OrganizationsPage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [rows, setRows] = useState<OrganizationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -310,10 +312,14 @@ const OrganizationsPage: React.FC = () => {
         meta: { headerTitle: t('settings.name') },
         header: ({ column }) => <DataGridColumnHeader column={column} title={t('settings.name')} />,
         cell: ({ row }) => (
-          <div>
+          <button
+            type="button"
+            className="text-left hover:underline"
+            onClick={() => navigate(`/admin/organizations/${row.original.id}`)}
+          >
             <p className="text-sm font-semibold uppercase text-foreground">{row.original.name}</p>
             <p className="text-muted-foreground text-[11px] font-medium">{row.original.timezone}</p>
-          </div>
+          </button>
         )
       },
       {
@@ -375,6 +381,30 @@ const OrganizationsPage: React.FC = () => {
                 size="sm"
                 variant="outline"
                 className="size-8"
+                onClick={() => navigate(`/admin/organizations/${org.id}`)}
+                aria-label="Ver organización"
+                title="Ver organización"
+              >
+                <ExternalLink className="size-3.5" />
+              </Button>
+              <Button
+                type="button"
+                mode="icon"
+                size="sm"
+                variant="outline"
+                className="size-8"
+                onClick={() => navigate(`/admin/organizations/${org.id}/branding`)}
+                aria-label="Configurar branding"
+                title="Branding de la app"
+              >
+                <Paintbrush className="size-3.5" />
+              </Button>
+              <Button
+                type="button"
+                mode="icon"
+                size="sm"
+                variant="outline"
+                className="size-8"
                 onClick={() => openEdit(org)}
                 aria-label={t('settings.organizationsEdit')}
               >
@@ -396,7 +426,7 @@ const OrganizationsPage: React.FC = () => {
         }
       }
     ],
-    [t, openEdit, remove]
+    [t, navigate, openEdit, remove]
   );
 
   const table = useReactTable({

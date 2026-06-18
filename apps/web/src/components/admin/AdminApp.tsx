@@ -18,11 +18,16 @@ import ProfesoresPage from './pages/ProfesoresPage';
 import PadresPage from './pages/PadresPage';
 import ClasesPage from './pages/ClasesPage';
 import DisciplineResourcesAdminPage from './pages/DisciplineResourcesAdminPage';
+import MensajeriaAdminPage from './pages/MensajeriaAdminPage';
+import OrganizationBrandingPage from './pages/OrganizationBrandingPage';
+import OrganizationDetailPage from './pages/OrganizationDetailPage';
 
 const AdminProtectedRoutes: React.FC<{ email?: string; onLogout: () => void }> = ({ email, onLogout }) => (
   <Routes>
     <Route element={<AdminLayout email={email} onLogout={onLogout} />}>
       <Route path="organizations" element={<OrganizationsPage />} />
+      <Route path="organizations/:id" element={<OrganizationDetailPage />} />
+      <Route path="organizations/:id/branding" element={<OrganizationBrandingPage />} />
       <Route path="subscription-plans" element={<SubscriptionPlansPage />} />
       <Route path="teachers" element={<ProfesoresPage />} />
       <Route path="parents" element={<PadresPage />} />
@@ -33,6 +38,7 @@ const AdminProtectedRoutes: React.FC<{ email?: string; onLogout: () => void }> =
       <Route path="settings/smtp" element={<SmtpPage />} />
       <Route path="settings/storage" element={<StoragePage />} />
       <Route path="settings/translations" element={<TranslationsPage />} />
+      <Route path="messaging" element={<MensajeriaAdminPage />} />
       <Route path="settings/menus" element={<MenusPage />} />
       <Route path="settings/configuration" element={<ConfigurationPage />} />
       <Route path="settings/categories" element={<CategoriesPage />} />

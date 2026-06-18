@@ -210,15 +210,79 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
     }
   });
 
+  // ---- Likes ----------------------------------------------------------------
+
+  const ensureLikesTable = async () => {
+    if (await tableExists('CommunityPostLike')) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "CommunityPostLike" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "postId" UUID NOT NULL REFERENCES "CommunityPost"(id) ON DELETE CASCADE,
+        "userId" UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE ("postId", "userId")
+      );
+      CREATE INDEX IF NOT EXISTS idx_cpl_post ON "CommunityPostLike"("postId");
+    `);
+  };
+
+  router.post('/:id/posts/:postId/like', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
+      if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      await ensureLikesTable();
+      const userId = requesterId(req);
+      const postId = req.params.postId;
+
+      const existing = await pool.query(
+        'SELECT id FROM "CommunityPostLike" WHERE "postId" = $1 AND "userId" = $2',
+        [postId, userId]
+      );
+
+      if (existing.rows.length > 0) {
+        await pool.query('DELETE FROM "CommunityPostLike" WHERE "postId" = $1 AND "userId" = $2', [postId, userId]);
+      } else {
+        await pool.query(
+          'INSERT INTO "CommunityPostLike" (id, "postId", "userId") VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [crypto.randomUUID(), postId, userId]
+        );
+      }
+
+      const countResult = await pool.query(
+        'SELECT COUNT(*)::int AS count FROM "CommunityPostLike" WHERE "postId" = $1',
+        [postId]
+      );
+      res.json({ liked: existing.rows.length === 0, count: countResult.rows[0]?.count ?? 0 });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to toggle like', details: error.message });
+    }
+  });
+
   // ---- Posts ----------------------------------------------------------------
   router.get('/:id/posts', async (req, res) => {
     try {
       if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
       if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      await ensureLikesTable();
+      await ensureCommentsTable();
+      const userId = requesterId(req);
       const result = await pool.query(
-        `SELECT p.*, a.name AS "authorName" FROM "CommunityPost" p JOIN "User" a ON a.id = p."authorId"
-         WHERE p."communityId" = $1 ORDER BY p."createdAt" DESC`,
-        [req.params.id]
+        `SELECT p.*, a.name AS "authorName",
+                COALESCE(lc.cnt, 0)::int AS "likesCount",
+                COALESCE(cc.cnt, 0)::int AS "commentsCount",
+                (ul."userId" IS NOT NULL) AS "likedByMe"
+         FROM "CommunityPost" p
+         JOIN "User" a ON a.id = p."authorId"
+         LEFT JOIN (
+           SELECT "postId", COUNT(*)::int AS cnt FROM "CommunityPostLike" GROUP BY "postId"
+         ) lc ON lc."postId" = p.id
+         LEFT JOIN (
+           SELECT "postId", COUNT(*)::int AS cnt FROM "CommunityPostComment" GROUP BY "postId"
+         ) cc ON cc."postId" = p.id
+         LEFT JOIN "CommunityPostLike" ul ON ul."postId" = p.id AND ul."userId" = $2
+         WHERE p."communityId" = $1
+         ORDER BY p."createdAt" DESC`,
+        [req.params.id, userId]
       );
       res.json(result.rows);
     } catch (error: any) {
@@ -294,6 +358,89 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
       res.json(updated.rows[0]);
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to update post status', details: error.message });
+    }
+  });
+
+  // ---- Comments -------------------------------------------------------------
+
+  const ensureCommentsTable = async () => {
+    if (await tableExists('CommunityPostComment')) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "CommunityPostComment" (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "postId" UUID NOT NULL REFERENCES "CommunityPost"(id) ON DELETE CASCADE,
+        "authorId" UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cpc_post ON "CommunityPostComment"("postId");
+    `);
+  };
+
+  router.get('/:id/posts/:postId/comments', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
+      if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      await ensureCommentsTable();
+      const rows = await pool.query(
+        `SELECT c.id, c."postId", c.content, c."createdAt",
+                u.id AS "authorId", u.name AS "authorName",
+                u."firstName", u."lastName", u."avatarUrl"
+         FROM "CommunityPostComment" c
+         JOIN "User" u ON u.id = c."authorId"
+         WHERE c."postId" = $1
+         ORDER BY c."createdAt" ASC`,
+        [req.params.postId]
+      );
+      res.json(rows.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch comments', details: error.message });
+    }
+  });
+
+  router.post('/:id/posts/:postId/comments', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
+      if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      const content = String(req.body?.content || '').trim();
+      if (!content) return res.status(400).json({ error: 'content is required.' });
+      await ensureCommentsTable();
+      const authorId = requesterId(req);
+      const id = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO "CommunityPostComment" (id, "postId", "authorId", content) VALUES ($1, $2, $3, $4)`,
+        [id, req.params.postId, authorId, content]
+      );
+      const created = await pool.query(
+        `SELECT c.id, c."postId", c.content, c."createdAt",
+                u.id AS "authorId", u.name AS "authorName",
+                u."firstName", u."lastName", u."avatarUrl"
+         FROM "CommunityPostComment" c
+         JOIN "User" u ON u.id = c."authorId"
+         WHERE c.id = $1`,
+        [id]
+      );
+      res.status(201).json(created.rows[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to create comment', details: error.message });
+    }
+  });
+
+  router.delete('/:id/posts/:postId/comments/:commentId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
+      if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      await ensureCommentsTable();
+      const authorId = requesterId(req);
+      const r = await pool.query(
+        `DELETE FROM "CommunityPostComment" WHERE id = $1 AND "postId" = $2 AND "authorId" = $3`,
+        [req.params.commentId, req.params.postId, authorId]
+      );
+      if (!r.rowCount) return res.status(404).json({ error: 'Comment not found or not yours.' });
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to delete comment', details: error.message });
     }
   });
 

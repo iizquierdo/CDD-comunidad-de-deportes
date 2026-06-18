@@ -1,0 +1,13 @@
+{
+    "name": "Reports",
+    "code": "REPORTS",
+    "version": "1.0.0",
+    "description": "Informes de progreso de alumnos: listado global, ABM y visualización",
+    "entry": {
+        "api": "modules/reports/server/index.ts",
+        "ui": "modules/reports/client/index.ts"
+    },
+    "api": {
+        "basePath": "/api/reports"
+    }
+}

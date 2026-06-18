@@ -39,6 +39,7 @@ export const BreadcrumbBar: React.FC<BreadcrumbBarProps> = ({
     RoleSettings: { main: t('sidebar.settings'), sub: t('sidebar.roles') },
     StorageSettings: { main: t('sidebar.settings'), sub: t('sidebar.storage') || 'Storage' },
     MenuSettings: { main: t('sidebar.settings'), sub: t('sidebar.menus') || 'Menus' },
+    AppBrandingSettings: { main: t('sidebar.settings'), sub: 'App Branding' },
     Profile: { main: t('topbar.profile') || 'Profile', sub: t('topbar.myProfile') || 'My Profile' }
   };
 

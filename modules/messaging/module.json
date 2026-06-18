@@ -1,0 +1,17 @@
+{
+  "name": "Messaging",
+  "code": "MESSAGING",
+  "version": "1.0.0",
+  "description": "Mensajería directa entre padres y profesores",
+  "entry": {
+    "api": "modules/messaging/server/index.ts",
+    "admin": "modules/messaging/server/adminRoutes.ts",
+    "ui": "modules/messaging/client/MensajeriaModule.tsx"
+  },
+  "migrations": [
+    "migrations/001_init_messaging.sql"
+  ],
+  "api": {
+    "basePath": "/api/messaging"
+  }
+}

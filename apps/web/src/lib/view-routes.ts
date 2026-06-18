@@ -46,7 +46,8 @@ export const STATIC_VIEW_PATHS: Record<string, string> = {
   CategorySettings: '/settings/categories',
   ReferenceSettings: '/settings/references',
   StorageSettings: '/settings/storage',
-  MenuSettings: '/settings/menus'
+  MenuSettings: '/settings/menus',
+  AppBrandingSettings: '/settings/app-branding'
 };
 
 export interface ViewRoute {

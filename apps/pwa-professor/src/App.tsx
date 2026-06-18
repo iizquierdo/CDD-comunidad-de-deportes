@@ -1,67 +1,37 @@
-import { useEffect, useState } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { AppLayout } from "./components/AppLayout";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { InstallPage } from "./pages/InstallPage";
+import { LoginPage } from "./pages/LoginPage";
+import { ResumenPage } from "./pages/ResumenPage";
+import { ClasesPage } from "./pages/ClasesPage";
+import { ClaseDetailPage } from "./pages/ClaseDetailPage";
+import { SocialPage } from "./pages/SocialPage";
+import { SocialArticlePage } from "./pages/SocialArticlePage";
+import { CuadernoPage } from "./pages/CuadernoPage";
+import { ChatPage } from "./pages/ChatPage";
 
-// Minimal runnable scaffold for the Professor PWA (independent service).
-// It pings the Sinapsis API through the dev proxy to confirm connectivity;
-// real screens (students, reports, attendance) are still to be built.
-export default function App() {
-  const [api, setApi] = useState<"checking" | "ok" | "down">("checking");
-  const [appName, setAppName] = useState<string>("Natación");
-
-  useEffect(() => {
-    fetch("/api/public/core")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => {
-        setApi("ok");
-        if (d?.appName) setAppName(d.appName);
-      })
-      .catch(() => setApi("down"));
-  }, []);
-
-  const badge =
-    api === "ok"
-      ? { text: "API conectada", color: "#16a34a" }
-      : api === "down"
-        ? { text: "API no disponible", color: "#dc2626" }
-        : { text: "Comprobando API…", color: "#64748b" };
-
+const App = () => {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "system-ui, sans-serif",
-        background: "#0f172a",
-        color: "#e2e8f0",
-        padding: 24
-      }}
-    >
-      <div style={{ maxWidth: 420, textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🏊‍♂️</div>
-        <h1 style={{ margin: "0 0 4px", fontSize: 24 }}>{appName} · Profesores</h1>
-        <p style={{ margin: "0 0 20px", color: "#94a3b8", fontSize: 14 }}>
-          PWA de profesores — servicio independiente del monorepo.
-        </p>
-        <span
-          style={{
-            display: "inline-block",
-            padding: "6px 14px",
-            borderRadius: 999,
-            background: "rgba(255,255,255,0.06)",
-            color: badge.color,
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: 1,
-            textTransform: "uppercase"
-          }}
-        >
-          {badge.text}
-        </span>
-        <p style={{ marginTop: 24, color: "#64748b", fontSize: 12 }}>
-          Próximamente: alumnos asignados, informes y asistencia.
-        </p>
-      </div>
-    </div>
+    <Routes>
+      <Route path="/install/:orgId" element={<InstallPage />} />
+      <Route path="/login" element={<LoginPage />} />
+
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<Navigate to="/resumen" replace />} />
+          <Route path="/resumen" element={<ResumenPage />} />
+          <Route path="/clases" element={<ClasesPage />} />
+          <Route path="/clases/:classId" element={<ClaseDetailPage />} />
+          <Route path="/social" element={<SocialPage />} />
+          <Route path="/social/:postId" element={<SocialArticlePage />} />
+          <Route path="/cuaderno" element={<CuadernoPage />} />
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="*" element={<Navigate to="/resumen" replace />} />
+        </Route>
+      </Route>
+    </Routes>
   );
-}
+};
+
+export default App;

@@ -31,6 +31,14 @@ model Organization {
   storageProvider   String    @default("Local")
   storageSettings   Json?
   subscriptionPlanId String
+  appName           String?
+  logoUrl           String?
+  isologoUrl        String?
+  faviconUrl        String?
+  primaryColor      String?
+  secondaryColor    String?
+  backgroundImageUrl String?
+  slogan            String?
   companies         Company[]
   categoryItems     CategoryItem[]
   subscriptionPlan  SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])

@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import multer from 'multer';
 import type { Pool } from 'pg';
 import {
   fetchMergedItemsByCategoryCodes,
@@ -9,8 +10,11 @@ import {
   ensureCoreReferenceTemplate,
   propagateReferenceTemplateToAllCompanies,
   getRequesterUserId,
+  putObject,
   type RequesterScope
 } from '@sinapsis/module-sdk-server';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 interface ClassesModuleContext {
   app: express.Express;
@@ -38,6 +42,13 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
     return Boolean(r.rows[0]?.t);
   };
 
+  let levelColumnsEnsured = false;
+  const ensureLevelColumns = async () => {
+    if (levelColumnsEnsured) return;
+    await pool.query('ALTER TABLE "ClassLevel" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT');
+    levelColumnsEnsured = true;
+  };
+
   /** SQL WHERE fragment (+params) limiting classes (alias cl) to those the requester may see. */
   const scopedClassClause = (scope: RequesterScope | null, params: any[]): string => {
     if (!scope) return 'false';
@@ -47,11 +58,13 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       params.push(scope.companyScope);
       return `cl."companyId" = ANY($${params.length})`;
     }
-    if (scope.isProfesor) {
+    if (scope.isProfesor || scope.isTutor) {
       params.push(scope.userId);
       return `EXISTS (SELECT 1 FROM "ClassTeacher" ct WHERE ct."classId" = cl.id AND ct."teacherId" = $${params.length} AND ct.active)`;
     }
-    return 'false';
+    // Fallback: any authenticated non-admin user sees classes they're explicitly assigned to as teacher.
+    params.push(scope.userId);
+    return `EXISTS (SELECT 1 FROM "ClassTeacher" ct WHERE ct."classId" = cl.id AND ct."teacherId" = $${params.length} AND ct.active)`;
   };
 
   const canAccessClass = async (scope: RequesterScope | null, classId: string): Promise<boolean> => {
@@ -106,7 +119,8 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       ? (await pool.query('SELECT id, name, description, "levelOrder", color FROM "DisciplineLevel" WHERE "disciplineId" = $1 AND active = true ORDER BY "levelOrder" ASC', [klass.disciplineId])).rows
       : [];
     const teachers = await pool.query(
-      `SELECT ct.*, u.name AS "teacherName", u.email AS "teacherEmail"
+      `SELECT ct.*, u.name AS "teacherName", u.email AS "teacherEmail",
+              COALESCE(u."imageUrl", u.avatar) AS "teacherAvatar", u.phone AS "teacherPhone"
        FROM "ClassTeacher" ct JOIN "User" u ON u.id = ct."teacherId"
        WHERE ct."classId" = $1 ORDER BY u.name ASC`,
       [id]
@@ -277,7 +291,7 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
         `SELECT cl.id, cl.code, cl.name, cl."disciplineId", cl."companyId", cl.capacity, cl.status,
                 c.name AS "companyName",
                 ${hasDisciplines ? `(SELECT d.name FROM "Discipline" d WHERE d.id = cl."disciplineId")` : 'NULL'} AS "disciplineName",
-                (SELECT COUNT(*)::int FROM "ClassTeacher" ct WHERE ct."classId" = cl.id AND ct.active) AS "teacherCount",
+                (SELECT COALESCE(json_agg(json_build_object('id', u.id, 'name', u.name, 'avatar', COALESCE(u."imageUrl", u.avatar)) ORDER BY u.name ASC), '[]'::json) FROM "ClassTeacher" ct JOIN "User" u ON u.id = ct."teacherId" WHERE ct."classId" = cl.id AND ct.active) AS "teachers",
                 (SELECT COUNT(*)::int FROM "ClassSchedule" cs WHERE cs."classId" = cl.id) AS "scheduleCount",
                 (SELECT COUNT(*)::int FROM "ClassStudent" cst WHERE cst."classId" = cl.id AND cst.status = 'ACTIVE') AS "studentCount",
                 (SELECT COALESCE(json_agg(json_build_object('dayOfWeek', s."dayOfWeek", 'startTime', s."startTime", 'endTime', s."endTime") ORDER BY s."dayOfWeek" ASC, s."startTime" ASC), '[]'::json) FROM "ClassSchedule" s WHERE s."classId" = cl.id) AS "schedules"
@@ -339,6 +353,7 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       const scope = await scopeOf(req);
       if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can edit class levels.' });
       if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureLevelColumns();
       const name = String(req.body?.name || '').trim();
       if (!name) return res.status(400).json({ error: 'name is required.' });
 
@@ -349,9 +364,9 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       }
       const id = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO "ClassLevel" (id, "classId", name, description, "levelOrder", color, active, "createdAt", "updatedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
-        [id, req.params.id, name, String(req.body?.description || '').trim() || null, levelOrder, String(req.body?.color || '').trim() || null, req.body?.active === false ? false : true]
+        `INSERT INTO "ClassLevel" (id, "classId", name, description, "levelOrder", color, active, "imageUrl", "createdAt", "updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())`,
+        [id, req.params.id, name, String(req.body?.description || '').trim() || null, levelOrder, String(req.body?.color || '').trim() || null, req.body?.active === false ? false : true, String(req.body?.imageUrl || '').trim() || null]
       );
       const created = await pool.query('SELECT * FROM "ClassLevel" WHERE id = $1', [id]);
       res.status(201).json(created.rows[0]);
@@ -366,19 +381,21 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
       const scope = await scopeOf(req);
       if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can edit class levels.' });
+      await ensureLevelColumns();
       const existing = await pool.query('SELECT * FROM "ClassLevel" WHERE id = $1 AND "classId" = $2 LIMIT 1', [req.params.levelId, req.params.id]);
       const level = existing.rows[0];
       if (!level) return res.status(404).json({ error: 'Level not found' });
       if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
 
       await pool.query(
-        `UPDATE "ClassLevel" SET name=$1, description=$2, "levelOrder"=$3, color=$4, active=$5, "updatedAt"=NOW() WHERE id=$6`,
+        `UPDATE "ClassLevel" SET name=$1, description=$2, "levelOrder"=$3, color=$4, active=$5, "imageUrl"=$6, "updatedAt"=NOW() WHERE id=$7`,
         [
           String(req.body?.name ?? level.name).trim() || level.name,
           req.body?.description !== undefined ? (String(req.body.description).trim() || null) : level.description,
           Number.isFinite(Number(req.body?.levelOrder)) ? Number(req.body.levelOrder) : level.levelOrder,
           req.body?.color !== undefined ? (String(req.body.color).trim() || null) : level.color,
           req.body?.active !== undefined ? Boolean(req.body.active) : level.active,
+          req.body?.imageUrl !== undefined ? (String(req.body.imageUrl).trim() || null) : level.imageUrl,
           req.params.levelId
         ]
       );
@@ -400,6 +417,98 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to delete class level', details: error.message });
+    }
+  });
+
+  // ---- Level image upload ---------------------------------------------------
+  router.post('/:id/levels/:levelId/image', upload.single('file'), async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can edit class levels.' });
+      await ensureLevelColumns();
+      const level = await pool.query('SELECT * FROM "ClassLevel" WHERE id = $1 AND "classId" = $2 LIMIT 1', [req.params.levelId, req.params.id]);
+      if (!level.rows[0]) return res.status(404).json({ error: 'Level not found' });
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'No file uploaded.' });
+
+      const org = await pool.query(`SELECT o.name, o.id FROM "Organization" o JOIN "Company" c ON c."organizationId" = o.id JOIN "Class" cl ON cl."companyId" = c.id WHERE cl.id = $1 LIMIT 1`, [req.params.id]);
+      const orgRow = org.rows[0];
+      const folder = orgRow ? `${orgRow.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${String(orgRow.id).split('-')[0]}` : 'classes';
+      const ext = file.originalname.includes('.') ? file.originalname.split('.').pop() : 'jpg';
+      const { url } = await putObject({ pool, key: `${folder}/level_${req.params.levelId}_${Date.now()}.${ext}`, buffer: file.buffer, contentType: file.mimetype });
+
+      await pool.query('UPDATE "ClassLevel" SET "imageUrl"=$1, "updatedAt"=NOW() WHERE id=$2', [url, req.params.levelId]);
+      res.json({ success: true, imageUrl: url });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to upload level image', details: error.message });
+    }
+  });
+
+  // ---- Attendance -----------------------------------------------------------
+  let attendanceTableEnsured = false;
+  const ensureAttendanceTable = async () => {
+    if (attendanceTableEnsured) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "ClassAttendance" (
+        "id" TEXT NOT NULL,
+        "classId" TEXT NOT NULL,
+        "studentId" TEXT NOT NULL,
+        "date" DATE NOT NULL,
+        "present" BOOLEAN NOT NULL DEFAULT true,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL,
+        CONSTRAINT "ClassAttendance_pkey" PRIMARY KEY ("id")
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "ClassAttendance_class_student_date_key"
+        ON "ClassAttendance"("classId", "studentId", "date");
+    `);
+    attendanceTableEnsured = true;
+  };
+
+  router.get('/:id/attendance', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureAttendanceTable();
+      const from = String(req.query.from || '').trim();
+      const to = String(req.query.to || '').trim();
+      const params: any[] = [req.params.id];
+      let dateFilter = '';
+      if (from) { params.push(from); dateFilter += ` AND a."date" >= $${params.length}`; }
+      if (to) { params.push(to); dateFilter += ` AND a."date" <= $${params.length}`; }
+      const result = await pool.query(
+        `SELECT a."studentId", to_char(a."date", 'YYYY-MM-DD') AS "date", a."present"
+         FROM "ClassAttendance" a WHERE a."classId" = $1${dateFilter} ORDER BY a."date" ASC`,
+        params
+      );
+      res.json(result.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch attendance', details: error.message });
+    }
+  });
+
+  router.post('/:id/attendance', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can record attendance.' });
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureAttendanceTable();
+      const studentId = String(req.body?.studentId || '').trim();
+      const date = String(req.body?.date || '').trim();
+      const present = req.body?.present !== false;
+      if (!studentId || !date) return res.status(400).json({ error: 'studentId and date are required.' });
+      await pool.query(
+        `INSERT INTO "ClassAttendance" (id, "classId", "studentId", "date", "present", "createdAt", "updatedAt")
+         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+         ON CONFLICT ("classId", "studentId", "date") DO UPDATE SET "present"=$5, "updatedAt"=NOW()`,
+        [crypto.randomUUID(), req.params.id, studentId, date, present]
+      );
+      res.json({ studentId, date, present });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to record attendance', details: error.message });
     }
   });
 

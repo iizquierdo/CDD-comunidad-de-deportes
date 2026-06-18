@@ -11,10 +11,13 @@ const moduleDefinition: ModuleClientDefinition = {
   },
   views: {
     Teachers: ({ setView, currentUser, companyId, onSubTitleChange }) =>
-      React.createElement(TeachersModule, { view: 'list', setView, currentUser, companyId, onSubTitleChange })
+      React.createElement(TeachersModule, { view: 'list', setView, currentUser, companyId, onSubTitleChange }),
+    TeacherDetails: ({ setView, currentUser, companyId, onSubTitleChange, recordId }) =>
+      React.createElement(TeachersModule, { view: 'details', setView, currentUser, companyId, onSubTitleChange, recordId })
   },
   routes: [
-    { view: 'Teachers', path: 'teachers' }
+    { view: 'Teachers', path: 'teachers' },
+    { view: 'TeacherDetails', path: 'teachers/:id' }
   ],
   sidebarSections: [
     {
@@ -23,7 +26,8 @@ const moduleDefinition: ModuleClientDefinition = {
     }
   ],
   breadcrumbs: {
-    Teachers: { main: 'teachers.title', sub: 'teachers.list' }
+    Teachers: { main: 'teachers.title', sub: 'teachers.list' },
+    TeacherDetails: { main: 'teachers.title', sub: 'teachers.details', listTarget: 'Teachers' }
   },
   translations: TEACHERS_TRANSLATIONS
 };

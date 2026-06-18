@@ -18,6 +18,7 @@ const links = [
   { to: '/admin/settings/smtp', label: 'SMTP', icon: 'fa-at' },
   { to: '/admin/settings/storage', label: 'Storage', icon: 'fa-database' },
   { to: '/admin/settings/translations', label: 'Translations', icon: 'fa-language' },
+  { to: '/admin/messaging', label: 'Mensajería', icon: 'fa-comments' },
   { to: '/admin/settings/menus', label: 'Menus', icon: 'fa-bars-staggered' }
 ];
 

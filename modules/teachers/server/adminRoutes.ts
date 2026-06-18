@@ -79,6 +79,39 @@ export const registerModuleAdminRoutes = async (
     }
   });
 
+  // Get a single teacher by ID.
+  router.get('/teachers/:id', async (req, res) => {
+    try {
+      await ensureColumns();
+      const teacher = await loadOne(req.params.id);
+      if (!teacher) return res.status(404).json({ error: 'Teacher not found' });
+      res.json(teacher);
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to load teacher', details: e?.message || String(e) });
+    }
+  });
+
+  // Get classes assigned to a teacher.
+  router.get('/teachers/:id/classes', async (req, res) => {
+    try {
+      if (!(await tableExists('ClassTeacher'))) return res.json([]);
+      const hasDisciplines = await tableExists('Discipline');
+      const r = await pool.query(
+        `SELECT cl.id, cl.name, cl."companyId", cl.status, c.name AS "companyName",
+                ${hasDisciplines ? `(SELECT d.name FROM "Discipline" d WHERE d.id = cl."disciplineId")` : 'NULL'} AS "disciplineName"
+         FROM "ClassTeacher" ct
+         JOIN "Class" cl ON cl.id = ct."classId"
+         JOIN "Company" c ON c.id = cl."companyId"
+         WHERE ct."teacherId" = $1 AND ct.active = true
+         ORDER BY cl.name ASC`,
+        [req.params.id]
+      );
+      res.json(r.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to load teacher classes', details: e?.message || String(e) });
+    }
+  });
+
   router.post('/teachers', async (req, res) => {
     try {
       await ensureColumns();

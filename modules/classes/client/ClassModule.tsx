@@ -32,10 +32,12 @@ interface LevelItem { id: string; disciplineId: string; name: string }
 interface DisciplineItem { id: string; name: string; levels: LevelItem[] }
 interface CompanyItem { id: string; name: string }
 
+interface ClassTeacherSummary { id: string; name: string; avatar?: string | null }
+
 interface ClassRow {
   id: string; code?: string | null; name: string; disciplineId: string; disciplineName?: string | null;
   companyId: string; companyName?: string | null; capacity?: number | null; status: string;
-  teacherCount?: number; scheduleCount?: number; studentCount?: number;
+  teachers?: ClassTeacherSummary[]; scheduleCount?: number; studentCount?: number;
 }
 
 interface ScheduleForm { dayOfWeek: number; startTime: string; endTime: string; location: string }
@@ -64,7 +66,7 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
   const [companies, setCompanies] = useState<CompanyItem[]>([]);
 
   const [selected, setSelected] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'Overview' | 'Levels' | 'Teachers' | 'Schedule' | 'Students'>('Overview');
+  const [activeTab, setActiveTab] = useState<'Overview' | 'Levels' | 'Teachers' | 'Schedule' | 'Students' | 'Attendance'>('Overview');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,6 +76,24 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
   const [available, setAvailable] = useState<AvailableStudent[]>([]);
   const [enrollStudentId, setEnrollStudentId] = useState('');
   const [enrollLevelId, setEnrollLevelId] = useState('');
+
+  // Schedule inline ABM (details → Schedule tab)
+  const [scheduleEditing, setScheduleEditing] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleForm[]>([]);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  // Attendance (details → Attendance tab)
+  const [attendance, setAttendance] = useState<Record<string, boolean>>({});
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceToggling, setAttendanceToggling] = useState<Set<string>>(new Set());
+
+  // Level ABM (details → Levels tab)
+  const emptyLevelForm = { id: '', name: '', description: '', color: '#6366f1', levelOrder: 0, active: true, imageUrl: '' };
+  const [levelModalOpen, setLevelModalOpen] = useState(false);
+  const [levelForm, setLevelForm] = useState({ ...emptyLevelForm });
+  const [levelSaving, setLevelSaving] = useState(false);
+  const [levelImageFile, setLevelImageFile] = useState<File | null>(null);
+  const [levelImagePreview, setLevelImagePreview] = useState<string>('');
 
   const dayLabel = (d: number) => t(`classes.days.${d}`, { defaultValue: String(d) });
   const teacherName = (id: string) => meta.staff.find((s) => s.id === id)?.name || id;
@@ -134,6 +154,49 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, activeTab, selected?.id]);
 
+  useEffect(() => {
+    if (activeTab !== 'Attendance' || !selected?.id) return;
+    const today = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const from = fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 15));
+    const to = fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 15));
+    setAttendanceLoading(true);
+    fetch(`/api/classes/${selected.id}/attendance?from=${from}&to=${to}`)
+      .then((r) => r.json()).then((rows: { studentId: string; date: string; present: boolean }[]) => {
+        const map: Record<string, boolean> = {};
+        rows.forEach((r) => { map[`${r.studentId}_${r.date}`] = r.present; });
+        setAttendance(map);
+      }).catch(() => {}).finally(() => setAttendanceLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selected?.id]);
+
+  const attendanceDates = useMemo(() => {
+    if (!selected?.schedules) return [];
+    const classDays = new Set((selected.schedules as any[]).map((s: any) => Number(s.dayOfWeek)));
+    if (classDays.size === 0) return [];
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const result: { date: Date; key: string }[] = [];
+    for (let i = -15; i <= 15; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      if (classDays.has(d.getDay())) result.push({ date: d, key: d.toISOString().slice(0, 10) });
+    }
+    return result;
+  }, [selected?.schedules]);
+
+  const toggleAttendance = async (studentId: string, dateKey: string) => {
+    const k = `${studentId}_${dateKey}`;
+    const next = attendance[k] !== true;
+    setAttendance((prev) => ({ ...prev, [k]: next }));
+    setAttendanceToggling((prev) => new Set(prev).add(k));
+    try {
+      await fetch(`/api/classes/${selected!.id}/attendance`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, date: dateKey, present: next })
+      });
+    } catch { setAttendance((prev) => ({ ...prev, [k]: !next })); }
+    finally { setAttendanceToggling((prev) => { const s = new Set(prev); s.delete(k); return s; }); }
+  };
+
   const openDetails = (c: ClassRow) => { setActiveTab('Overview'); setView('ClassDetails', { id: c.id }); };
 
   const openCreate = () => {
@@ -181,6 +244,75 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
   const toggleStatus = async (c: ClassRow) => {
     await fetch(`/api/classes/${c.id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: c.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' }) });
     await loadClasses();
+  };
+
+  const openLevelCreate = () => {
+    const nextOrder = Math.max(0, ...((selected?.ownLevels || []) as any[]).map((l: any) => Number(l.levelOrder ?? 0))) + 1;
+    setLevelForm({ ...emptyLevelForm, levelOrder: nextOrder });
+    setLevelImageFile(null);
+    setLevelImagePreview('');
+    setLevelModalOpen(true);
+  };
+
+  const openLevelEdit = (l: any) => {
+    setLevelForm({ id: l.id, name: l.name || '', description: l.description || '', color: l.color || '#6366f1', levelOrder: l.levelOrder ?? 0, active: l.active !== false, imageUrl: l.imageUrl || '' });
+    setLevelImageFile(null);
+    setLevelImagePreview(l.imageUrl || '');
+    setLevelModalOpen(true);
+  };
+
+  const submitLevel = async () => {
+    if (!selected || !levelForm.name.trim()) return;
+    setLevelSaving(true);
+    try {
+      const isEdit = Boolean(levelForm.id);
+      const url = isEdit ? `/api/classes/${selected.id}/levels/${levelForm.id}` : `/api/classes/${selected.id}/levels`;
+      const res = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: levelForm.name, description: levelForm.description || null, color: levelForm.color || null, levelOrder: levelForm.levelOrder, active: levelForm.active })
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('classes.errorSave')); }
+      const saved = await res.json();
+      if (levelImageFile) {
+        const fd = new FormData();
+        fd.append('file', levelImageFile);
+        await fetch(`/api/classes/${selected.id}/levels/${saved.id}/image`, { method: 'POST', body: fd });
+      }
+      setLevelModalOpen(false);
+      await loadDetails(selected.id);
+    } catch (e: any) { setError(e.message || t('classes.errorSave')); }
+    finally { setLevelSaving(false); }
+  };
+
+  const deleteLevel = async (levelId: string) => {
+    if (!selected) return;
+    try {
+      await fetch(`/api/classes/${selected.id}/levels/${levelId}`, { method: 'DELETE' });
+      await loadDetails(selected.id);
+    } catch { /* ignore */ }
+  };
+
+  const openScheduleEdit = () => {
+    setScheduleDraft((selected?.schedules || []).map((s: any) => ({
+      dayOfWeek: Number(s.dayOfWeek), startTime: s.startTime || '', endTime: s.endTime || '', location: s.location || ''
+    })));
+    setScheduleEditing(true);
+  };
+
+  const saveSchedules = async () => {
+    if (!selected) return;
+    setScheduleSaving(true);
+    try {
+      const res = await fetch(`/api/classes/${selected.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedules: scheduleDraft.filter((s) => Number.isFinite(s.dayOfWeek) && s.startTime && s.endTime) })
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('classes.errorSave')); }
+      setScheduleEditing(false);
+      await loadDetails(selected.id);
+    } catch (e: any) { setError(e.message || t('classes.errorSave')); }
+    finally { setScheduleSaving(false); }
   };
 
   const enrollStudent = async () => {
@@ -257,9 +389,30 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
       },
       {
         id: 'teachers',
-        accessorFn: (row) => row.teacherCount ?? 0,
+        accessorFn: (row) => (row.teachers || []).length,
         header: ({ column }) => <DataGridColumnHeader column={column} title={t('classes.teachersCount')} />,
-        cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.original.teacherCount ?? 0}</span>
+        cell: ({ row }) => {
+          const teachers = row.original.teachers || [];
+          if (teachers.length === 0) return <span className="text-sm text-muted-foreground">—</span>;
+          const visible = teachers.slice(0, 4);
+          const extra = teachers.length - visible.length;
+          return (
+            <div className="flex items-center -space-x-2">
+              {visible.map((t) => (
+                <div key={t.id} title={t.name} className="size-7 shrink-0 rounded-full ring-2 ring-background overflow-hidden bg-slate-100 flex items-center justify-center">
+                  {t.avatar
+                    ? <img src={t.avatar} alt={t.name} className="size-full object-cover" />
+                    : <span className="text-[10px] font-semibold text-slate-500 uppercase leading-none">{t.name.charAt(0)}</span>}
+                </div>
+              ))}
+              {extra > 0 && (
+                <div className="size-7 shrink-0 rounded-full ring-2 ring-background bg-slate-200 flex items-center justify-center">
+                  <span className="text-[10px] font-semibold text-slate-600">+{extra}</span>
+                </div>
+              )}
+            </div>
+          );
+        }
       },
       {
         id: 'students',
@@ -333,7 +486,8 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
             { id: 'Levels', label: t('classes.levels') },
             { id: 'Teachers', label: t('classes.teachers') },
             { id: 'Schedule', label: t('classes.schedule') },
-            { id: 'Students', label: t('classes.students') }
+            { id: 'Students', label: t('classes.students') },
+            { id: 'Attendance', label: 'Asistencia' }
           ]}
           activeTab={activeTab}
           onTabChange={(id) => setActiveTab(id as typeof activeTab)}
@@ -358,50 +512,258 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
           )}
 
           {activeTab === 'Levels' && selected && (
-            <div className="space-y-5 px-1">
-              <div>
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">{t('classes.inheritedLevels')}</h3>
-                {(selected.inheritedLevels || []).length === 0 ? <Empty text={t('classes.none')} /> : (
-                  <div className="flex flex-wrap gap-2">
-                    {(selected.inheritedLevels as any[]).map((l) => (
-                      <span key={l.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">{l.name}</span>
-                    ))}
-                  </div>
-                )}
+            <div className="px-1 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('classes.levels')}</span>
+                <button type="button" onClick={openLevelCreate}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 transition-colors">
+                  <i className="fa-solid fa-plus text-[10px]" />{t('classes.addLevel', { defaultValue: 'Agregar nivel' })}
+                </button>
               </div>
-              <div>
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">{t('classes.ownLevels')}</h3>
-                {(selected.ownLevels || []).length === 0 ? <Empty text={t('classes.none')} /> : (
-                  <div className="flex flex-wrap gap-2">
-                    {(selected.ownLevels as any[]).map((l) => (
-                      <span key={l.id} className="rounded-lg border border-red-100 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600">{l.name}</span>
+
+              {(selected.ownLevels || []).length === 0
+                ? <Empty text={t('classes.none')} />
+                : <div className="grid gap-3 sm:grid-cols-2">
+                    {(selected.ownLevels as any[]).map((l: any) => (
+                      <div key={l.id} className="relative flex items-center gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        {/* Color bar */}
+                        <div className="w-1.5 self-stretch shrink-0 rounded-l-xl" style={{ backgroundColor: l.color || '#e2e8f0' }} />
+                        {/* Logo */}
+                        <div className="size-12 shrink-0 rounded-lg overflow-hidden bg-slate-100 flex items-center justify-center my-3">
+                          {l.imageUrl
+                            ? <img src={l.imageUrl} alt={l.name} className="size-full object-cover" />
+                            : <span className="text-lg font-bold text-slate-300">{(l.name || '?').charAt(0).toUpperCase()}</span>}
+                        </div>
+                        {/* Info */}
+                        <div className="min-w-0 flex-1 py-3 pr-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-slate-800 truncate">{l.name}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${l.active !== false ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                              {l.active !== false ? t('classes.active') : t('classes.inactive')}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">#{l.levelOrder}</span>
+                          </div>
+                          {l.description && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{l.description}</p>}
+                        </div>
+                        {/* Actions */}
+                        <div className="flex flex-col gap-1 pr-3 py-3 shrink-0">
+                          <button type="button" onClick={() => openLevelEdit(l)}
+                            className="flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
+                            <Pencil className="size-3.5" />
+                          </button>
+                          <button type="button" onClick={() => deleteLevel(l.id)}
+                            className="flex size-7 items-center justify-center rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors">
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     ))}
+                  </div>}
+
+              {/* Level modal */}
+              {levelModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+                      <h2 className="text-base font-bold text-slate-800">
+                        {levelForm.id ? t('classes.editLevel', { defaultValue: 'Editar nivel' }) : t('classes.addLevel', { defaultValue: 'Agregar nivel' })}
+                      </h2>
+                      <button type="button" onClick={() => setLevelModalOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="size-4" /></button>
+                    </div>
+                    <div className="space-y-4 px-6 py-5">
+                      {/* Nombre */}
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">{t('classes.levelName', { defaultValue: 'Nombre' })} *</label>
+                        <input className={inputClass} value={levelForm.name} onChange={(e) => setLevelForm({ ...levelForm, name: e.target.value })} placeholder="Ej: Principiante" />
+                      </div>
+                      {/* Descripción */}
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">{t('classes.description', { defaultValue: 'Descripción' })}</label>
+                        <textarea className={inputClass} rows={2} value={levelForm.description} onChange={(e) => setLevelForm({ ...levelForm, description: e.target.value })} placeholder="Descripción del nivel..." />
+                      </div>
+                      {/* Color + Orden */}
+                      <div className="flex gap-3">
+                        <div className="flex-1">
+                          <label className="mb-1 block text-xs font-semibold text-slate-600">{t('classes.color', { defaultValue: 'Color' })}</label>
+                          <div className="flex items-center gap-2">
+                            <input type="color" value={levelForm.color} onChange={(e) => setLevelForm({ ...levelForm, color: e.target.value })}
+                              className="size-10 shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-white p-0.5" />
+                            <input className={inputClass} value={levelForm.color} onChange={(e) => setLevelForm({ ...levelForm, color: e.target.value })} placeholder="#6366f1" />
+                          </div>
+                        </div>
+                        <div className="w-24">
+                          <label className="mb-1 block text-xs font-semibold text-slate-600">{t('classes.levelOrder', { defaultValue: 'Orden' })}</label>
+                          <input type="number" min={0} className={inputClass} value={levelForm.levelOrder}
+                            onChange={(e) => setLevelForm({ ...levelForm, levelOrder: Number(e.target.value) })} />
+                        </div>
+                      </div>
+                      {/* Foto */}
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-600">{t('classes.levelImage', { defaultValue: 'Foto / Logo' })}</label>
+                        <div className="flex items-center gap-3">
+                          <div className="size-16 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+                            {levelImagePreview
+                              ? <img src={levelImagePreview} alt="" className="size-full object-cover" />
+                              : <span className="text-2xl font-bold text-slate-200">{(levelForm.name || '?').charAt(0).toUpperCase()}</span>}
+                          </div>
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-2.5 text-sm text-slate-500 hover:border-primary hover:text-primary transition-colors">
+                            <i className="fa-solid fa-upload text-xs" />
+                            {levelImageFile ? levelImageFile.name : t('classes.uploadImage', { defaultValue: 'Subir imagen' })}
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                              const f = e.target.files?.[0] ?? null;
+                              setLevelImageFile(f);
+                              if (f) { const r = new FileReader(); r.onload = (ev) => setLevelImagePreview(String(ev.target?.result || '')); r.readAsDataURL(f); }
+                              else setLevelImagePreview(levelForm.imageUrl);
+                            }} />
+                          </label>
+                        </div>
+                      </div>
+                      {/* Estado */}
+                      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <span className="text-sm font-medium text-slate-700">{t('classes.active')}</span>
+                        <button type="button"
+                          onClick={() => setLevelForm({ ...levelForm, active: !levelForm.active })}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${levelForm.active ? 'bg-primary' : 'bg-slate-200'}`}>
+                          <span className={`inline-block size-5 transform rounded-full bg-white shadow transition-transform ${levelForm.active ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+                      <button type="button" disabled={levelSaving} onClick={() => setLevelModalOpen(false)}
+                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                        {t('classes.cancel', { defaultValue: 'Cancelar' })}
+                      </button>
+                      <button type="button" disabled={levelSaving || !levelForm.name.trim()} onClick={submitLevel}
+                        className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-60">
+                        {levelSaving && <span className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
+                        {t('classes.save', { defaultValue: 'Guardar' })}
+                      </button>
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'Teachers' && selected && (
             <div className="px-1">
-              {(selected.teachers || []).length === 0 ? <Empty text={t('classes.none')} /> : (selected.teachers as any[]).map((x) => (
-                <div key={x.id} className="mb-1.5 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                  <Users className="size-4 text-slate-400" /> {x.teacherName}{x.teacherEmail ? <span className="text-xs text-slate-400">· {x.teacherEmail}</span> : null}
+              {(selected.teachers || []).length === 0 ? <Empty text={t('classes.none')} /> : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(selected.teachers as any[]).map((x) => (
+                    <div key={x.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div className="size-11 shrink-0 rounded-full overflow-hidden bg-slate-100 flex items-center justify-center ring-2 ring-slate-100">
+                        {x.teacherAvatar
+                          ? <img src={x.teacherAvatar} alt={x.teacherName} className="size-full object-cover" />
+                          : <span className="text-sm font-bold text-slate-400 uppercase">{(x.teacherName || '?').charAt(0)}</span>}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-800">{x.teacherName}</p>
+                        {x.teacherEmail && (
+                          <a href={`mailto:${x.teacherEmail}`} className="flex items-center gap-1 truncate text-xs text-slate-500 hover:text-primary transition-colors">
+                            <svg className="size-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><path d="M1 5l7 5 7-5"/></svg>
+                            {x.teacherEmail}
+                          </a>
+                        )}
+                        {x.teacherPhone && (
+                          <a href={`tel:${x.teacherPhone}`} className="flex items-center gap-1 truncate text-xs text-slate-500 hover:text-primary transition-colors">
+                            <svg className="size-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 2h3l1.5 3.5-1.8 1.1a9 9 0 004.7 4.7l1.1-1.8L15 11v3a1 1 0 01-1 1C5.2 15 1 10.8 1 3a1 1 0 011-1z"/></svg>
+                            {x.teacherPhone}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
 
           {activeTab === 'Schedule' && selected && (
-            <div className="px-1">
-              {(selected.schedules || []).length === 0 ? <Empty text={t('classes.none')} /> : (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {(selected.schedules as any[]).map((s) => (
-                    <div key={s.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
-                      <span className="text-sm font-semibold text-slate-900">{dayLabel(Number(s.dayOfWeek))}</span>
-                      <span className="text-sm text-slate-600">{s.startTime} – {s.endTime}{s.location ? ` · ${s.location}` : ''}</span>
+            <div className="px-1 space-y-3">
+              {/* Header row */}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('classes.schedule')}</span>
+                {!scheduleEditing && (
+                  <button type="button" onClick={openScheduleEdit}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 transition-colors">
+                    <Pencil className="size-3" />{t('classes.editSchedule', { defaultValue: 'Editar horarios' })}
+                  </button>
+                )}
+              </div>
+
+              {/* Read mode */}
+              {!scheduleEditing && (
+                (selected.schedules || []).length === 0
+                  ? <Empty text={t('classes.none')} />
+                  : <div className="grid gap-2 sm:grid-cols-2">
+                      {(selected.schedules as any[]).map((s: any, i: number) => (
+                        <div key={s.id ?? i} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <span className="text-sm font-semibold text-slate-900">{dayLabel(Number(s.dayOfWeek))}</span>
+                          <span className="text-sm text-slate-600">{s.startTime} – {s.endTime}{s.location ? ` · ${s.location}` : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+              )}
+
+              {/* Edit mode */}
+              {scheduleEditing && (
+                <div className="space-y-2">
+                  {scheduleDraft.length === 0 && (
+                    <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 py-4 text-center text-sm text-slate-400">
+                      {t('classes.none')}
+                    </p>
+                  )}
+                  {scheduleDraft.map((s, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                      <select
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        value={s.dayOfWeek}
+                        onChange={(e) => { const d = [...scheduleDraft]; d[i] = { ...d[i], dayOfWeek: Number(e.target.value) }; setScheduleDraft(d); }}>
+                        {[1,2,3,4,5,6,0].map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
+                      </select>
+                      <div className="flex items-center gap-1.5">
+                        <input type="time" value={s.startTime}
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          onChange={(e) => { const d = [...scheduleDraft]; d[i] = { ...d[i], startTime: e.target.value }; setScheduleDraft(d); }} />
+                        <span className="text-slate-400">–</span>
+                        <input type="time" value={s.endTime}
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          onChange={(e) => { const d = [...scheduleDraft]; d[i] = { ...d[i], endTime: e.target.value }; setScheduleDraft(d); }} />
+                      </div>
+                      <input
+                        className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        placeholder={t('classes.location', { defaultValue: 'Lugar (opcional)' })}
+                        value={s.location}
+                        onChange={(e) => { const d = [...scheduleDraft]; d[i] = { ...d[i], location: e.target.value }; setScheduleDraft(d); }} />
+                      <button type="button"
+                        className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-red-100 text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                        onClick={() => setScheduleDraft(scheduleDraft.filter((_, idx) => idx !== i))}>
+                        <Trash2 className="size-4" />
+                      </button>
                     </div>
                   ))}
+
+                  {/* Add row */}
+                  <button type="button"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 py-2.5 text-sm font-medium text-slate-500 hover:border-primary hover:text-primary transition-colors"
+                    onClick={() => setScheduleDraft([...scheduleDraft, { dayOfWeek: 1, startTime: '', endTime: '', location: '' }])}>
+                    <i className="fa-solid fa-plus text-xs" />{t('classes.addSchedule')}
+                  </button>
+
+                  {/* Actions */}
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" disabled={scheduleSaving}
+                      className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                      onClick={() => setScheduleEditing(false)}>
+                      {t('classes.cancel', { defaultValue: 'Cancelar' })}
+                    </button>
+                    <button type="button" disabled={scheduleSaving}
+                      className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition-colors disabled:opacity-60"
+                      onClick={saveSchedules}>
+                      {scheduleSaving && <span className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
+                      {t('classes.save', { defaultValue: 'Guardar' })}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -431,7 +793,6 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
                 </button>
               </div>
               {available.length === 0 && <p className="text-xs text-slate-400">{t('classes.noAvailableStudents')}</p>}
-
               {(selected.students || []).length === 0 ? <Empty text={t('classes.noStudents')} /> : (
                 <div className="space-y-2">
                   {(selected.students as any[]).map((s) => {
@@ -452,6 +813,105 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
               )}
             </div>
           )}
+
+          {activeTab === 'Attendance' && selected && (() => {
+            const todayKey = new Date().toISOString().slice(0, 10);
+            const students = selected.students as any[];
+            if (attendanceDates.length === 0) return (
+              <div className="px-1 py-10 text-center text-sm text-slate-400">
+                Esta clase no tiene horarios configurados.<br />Agregá horarios en el tab <strong>Horarios</strong> para habilitar la asistencia.
+              </div>
+            );
+            return (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                {attendanceLoading && (
+                  <div className="flex items-center justify-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                    <span className="size-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /> Cargando asistencia…
+                  </div>
+                )}
+                <table className="w-full border-collapse text-sm" style={{ minWidth: `${180 + attendanceDates.length * 56}px` }}>
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 z-20 min-w-[180px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Alumno
+                      </th>
+                      {attendanceDates.map(({ date, key }) => {
+                        const isToday = key === todayKey;
+                        const dow = date.toLocaleDateString('es-AR', { weekday: 'short' }).replace('.', '');
+                        return (
+                          <th key={key} className={cn('min-w-[52px] border-b border-slate-200 px-1 py-2 text-center', isToday ? 'bg-primary/10' : 'bg-slate-50')}>
+                            <div className={cn('text-[10px] font-bold capitalize', isToday ? 'text-primary' : 'text-slate-400')}>{dow}</div>
+                            <div className={cn('text-xs font-bold', isToday ? 'text-primary' : 'text-slate-700')}>
+                              {date.getDate()}/{date.getMonth() + 1}
+                            </div>
+                            {isToday && <div className="mx-auto mt-0.5 h-1 w-4 rounded-full bg-primary" />}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.length === 0 && (
+                      <tr><td colSpan={attendanceDates.length + 1} className="py-8 text-center text-sm text-slate-400">Sin alumnos inscriptos</td></tr>
+                    )}
+                    {students.map((s, si) => {
+                      const rowBg = si % 2 === 0 ? 'bg-white' : 'bg-slate-50/60';
+                      return (
+                        <tr key={s.id}>
+                          <td className={cn('sticky left-0 z-10 min-w-[180px] border-r border-slate-100 px-4 py-2.5', rowBg)}>
+                            <p className="truncate text-sm font-medium text-slate-800">
+                              {s.lastName ? `${s.lastName}, ${s.firstName}` : s.studentId}
+                            </p>
+                            {s.studentCode && <p className="text-[11px] text-slate-400">{s.studentCode}</p>}
+                          </td>
+                          {attendanceDates.map(({ key }) => {
+                            const k = `${s.studentId}_${key}`;
+                            const present = attendance[k];
+                            const isToday = key === todayKey;
+                            const toggling = attendanceToggling.has(k);
+                            return (
+                              <td key={key} className={cn('px-1 py-2 text-center', isToday ? 'bg-primary/5' : rowBg)}>
+                                <button
+                                  type="button"
+                                  onClick={() => void toggleAttendance(s.studentId, key)}
+                                  disabled={toggling}
+                                  title={present === true ? 'Presente — click para marcar ausente' : 'Ausente — click para marcar presente'}
+                                  className={cn(
+                                    'mx-auto flex size-8 items-center justify-center rounded-full border-2 transition-all duration-150',
+                                    toggling && 'opacity-50 cursor-wait',
+                                    present === true
+                                      ? 'border-emerald-400 bg-emerald-400 text-white hover:bg-emerald-500 hover:border-emerald-500'
+                                      : 'border-slate-200 bg-white text-slate-300 hover:border-primary hover:text-primary'
+                                  )}
+                                >
+                                  {toggling
+                                    ? <span className="size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                    : present === true
+                                      ? <Check className="size-4" />
+                                      : <span className="size-1.5 rounded-full bg-current" />}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="flex items-center gap-4 border-t border-slate-100 bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="flex size-5 items-center justify-center rounded-full bg-emerald-400 text-white"><Check className="size-3" /></span>Presente
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="flex size-5 items-center justify-center rounded-full border-2 border-slate-200 bg-white"><span className="size-1 rounded-full bg-slate-300" /></span>Ausente
+                  </span>
+                  <span className="flex items-center gap-1.5 ml-auto">
+                    <span className="h-2 w-4 rounded-full bg-primary/30" />Hoy
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {modalOpen && ClassForm()}

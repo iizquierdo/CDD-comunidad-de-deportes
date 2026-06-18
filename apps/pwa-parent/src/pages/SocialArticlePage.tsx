@@ -6,43 +6,42 @@ import { extractErrorMessage } from "../lib/api";
 import { fetchCommunities } from "../lib/data";
 import type { CommunityDetail, CommunityPost } from "../types";
 
-const formatDate = (value?: string | null) => {
-  if (!value) return "Reciente";
-
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return "Reciente";
-
-  return new Date(timestamp).toLocaleDateString("es-AR", {
+const formatDate = (v?: string | null) => {
+  if (!v) return "Reciente";
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) return "Reciente";
+  return new Date(t).toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "long",
     year: "numeric"
   });
 };
 
-const isImageUrl = (value: string) => {
-  const normalized = value.split("?")[0].toLowerCase();
-  return [".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg"].some((extension) =>
-    normalized.endsWith(extension)
+const isImageUrl = (v: string) =>
+  [".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg"].some((e) =>
+    v.split("?")[0].toLowerCase().endsWith(e)
   );
-};
 
-const isVideoUrl = (value: string) => {
-  const normalized = value.split("?")[0].toLowerCase();
-  return [".mp4", ".webm", ".mov", ".m3u8"].some((extension) => normalized.endsWith(extension));
-};
+const isVideoUrl = (v: string) =>
+  [".mp4", ".webm", ".mov", ".m3u8"].some((e) =>
+    v.split("?")[0].toLowerCase().endsWith(e)
+  );
 
 const getMediaFromPost = (post: CommunityPost) => {
   if (post.coverUrl && (isImageUrl(post.coverUrl) || isVideoUrl(post.coverUrl))) {
-    return { url: post.coverUrl, kind: isVideoUrl(post.coverUrl) ? "video" : ("image" as const) };
+    return {
+      url: post.coverUrl,
+      kind: isVideoUrl(post.coverUrl) ? "video" : ("image" as const)
+    };
   }
-
-  const attachment = post.attachments.find((item) => {
-    if (item.mimeType?.startsWith("image/") || item.mimeType?.startsWith("video/")) return true;
-    return isImageUrl(item.fileUrl) || isVideoUrl(item.fileUrl);
-  });
-
+  const attachment = post.attachments.find(
+    (a) =>
+      a.mimeType?.startsWith("image/") ||
+      a.mimeType?.startsWith("video/") ||
+      isImageUrl(a.fileUrl) ||
+      isVideoUrl(a.fileUrl)
+  );
   if (!attachment) return null;
-
   return {
     url: attachment.fileUrl,
     kind:
@@ -70,20 +69,17 @@ export const SocialArticlePage = () => {
       setError(null);
 
       try {
-        const fullCommunities = await fetchCommunities();
-
-        const scopedCommunities = selectedStudentId
-          ? fullCommunities.filter((community) =>
-              community.members.some((member) => member.active && member.student.id === selectedStudentId)
+        const full = await fetchCommunities();
+        const scoped = selectedStudentId
+          ? full.filter((c) =>
+              c.members.some((m) => m.active && m.student.id === selectedStudentId)
             )
-          : fullCommunities;
-
+          : full;
         if (cancelled) return;
-
-        setCommunities(scopedCommunities);
-      } catch (requestError) {
+        setCommunities(scoped);
+      } catch (e) {
         if (cancelled) return;
-        setError(extractErrorMessage(requestError));
+        setError(extractErrorMessage(e));
         setCommunities([]);
       } finally {
         if (!cancelled) setLoading(false);
@@ -91,23 +87,14 @@ export const SocialArticlePage = () => {
     };
 
     void load();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [selectedStudentId]);
 
   const article = useMemo(() => {
-    for (const community of communities) {
-      const post = community.posts.find((item) => item.id === postId);
-      if (post) {
-        return {
-          ...post,
-          communityName: community.name
-        };
-      }
+    for (const c of communities) {
+      const post = c.posts.find((p) => p.id === postId);
+      if (post) return { ...post, communityName: c.name };
     }
-
     return null;
   }, [communities, postId]);
 
@@ -116,76 +103,107 @@ export const SocialArticlePage = () => {
   const attachments = article?.attachments ?? [];
 
   return (
-    <div className="screen-stack social-screen social-article-page">
-      <Link className="social-article-back" to="/social">
-        <MaterialIcon name="arrow_back" />
+    <div className="px-4 pb-6 pt-5">
+      {/* Back link */}
+      <Link
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
+        to="/social"
+      >
+        <MaterialIcon name="arrow_back" className="text-base" />
         Volver a Social
       </Link>
 
       {loading && (
-        <article className="empty-state-card">
-          <p>Cargando articulo...</p>
-        </article>
+        <div className="rounded-3xl bg-white p-10 text-center shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+          <p className="text-sm text-slate-400">Cargando artículo...</p>
+        </div>
       )}
 
       {error && (
-        <article className="empty-state-card">
-          <p>{error}</p>
-        </article>
+        <div className="rounded-3xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
 
       {!loading && !error && !article && (
-        <article className="empty-state-card">
-          <p>No encontramos este articulo para el alumno seleccionado.</p>
-        </article>
+        <div className="flex flex-col items-center gap-3 rounded-3xl bg-white p-10 text-center shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+          <MaterialIcon name="article" className="text-4xl text-slate-200" />
+          <p className="text-sm text-slate-400">
+            No encontramos este artículo para el alumno seleccionado.
+          </p>
+        </div>
       )}
 
       {!loading && !error && article && (
-        <article className="social-featured-card social-article-card">
-          <div className="social-featured-media social-article-media">
+        <div className="overflow-hidden rounded-3xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
+          {/* Media */}
+          <div className="relative bg-slate-100" style={{ aspectRatio: "16/9" }}>
             {heroMedia?.url ? (
               heroMedia.kind === "video" ? (
-                <video controls poster={article.coverUrl ?? undefined} src={heroMedia.url} />
+                <video
+                  className="h-full w-full object-cover"
+                  controls
+                  poster={article.coverUrl ?? undefined}
+                  src={heroMedia.url}
+                />
               ) : (
-                <img alt={article.title} src={heroMedia.url} />
+                <img
+                  alt={article.title}
+                  className="h-full w-full object-cover"
+                  src={heroMedia.url}
+                />
               )
             ) : (
-              <div className="social-featured-placeholder">
-                <MaterialIcon name="article" />
+              <div className="flex h-full w-full items-center justify-center">
+                <MaterialIcon name="article" className="text-5xl text-slate-300" />
               </div>
             )}
           </div>
 
-          <div className="social-featured-content social-article-content">
-            <span>Articulo completo</span>
-            <h1>{article.title}</h1>
+          {/* Content */}
+          <div className="p-5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--primary)]">
+              Artículo completo
+            </span>
+            <h1 className="mt-2 text-xl font-bold text-slate-900">{article.title}</h1>
 
-            <div className="social-article-meta">
-              <small>{article.communityName}</small>
-              <small>{publishedLabel}</small>
+            <div className="mt-2 flex items-center gap-3">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600">
+                {article.communityName}
+              </span>
+              <span className="text-[11px] text-slate-400">{publishedLabel}</span>
             </div>
 
-            <div className="social-article-body">
-              {article.content.split(/\r?\n/).map((paragraph, index) => (
-                <p key={`${article.id}-${index}`}>{paragraph || "\u00A0"}</p>
+            <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
+              {article.content.split(/\r?\n/).map((paragraph, i) => (
+                <p key={`${article.id}-${i}`} className="text-sm leading-relaxed text-slate-700">
+                  {paragraph || " "}
+                </p>
               ))}
             </div>
 
             {attachments.length > 0 && (
-              <div className="social-article-attachments">
-                <h2>Archivos adjuntos</h2>
-                <div className="social-article-links">
-                  {attachments.map((attachment) => (
-                    <a href={attachment.fileUrl} key={attachment.fileUrl} rel="noreferrer" target="_blank">
-                      {attachment.fileName}
-                      <MaterialIcon name="open_in_new" />
+              <div className="mt-5 border-t border-slate-100 pt-4">
+                <h2 className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Archivos adjuntos
+                </h2>
+                <div className="mt-2 space-y-2">
+                  {attachments.map((att) => (
+                    <a
+                      key={att.fileUrl}
+                      className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                      href={att.fileUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <MaterialIcon name="attach_file" className="text-slate-400" />
+                      {att.fileName}
+                      <MaterialIcon name="open_in_new" className="ml-auto text-xs text-slate-400" />
                     </a>
                   ))}
                 </div>
               </div>
             )}
           </div>
-        </article>
+        </div>
       )}
     </div>
   );

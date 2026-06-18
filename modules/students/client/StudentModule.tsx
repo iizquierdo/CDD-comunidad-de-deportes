@@ -15,6 +15,118 @@ import { cn } from '@webapp/lib/utils';
 import ListCard from '@webapp/components/shared/ListCard';
 import ProfileHeader from '@webapp/components/shared/ProfileHeader';
 
+// ---- Rating themes ----------------------------------------------------------
+
+const RATING_THEMES = [
+  { key: 'stars',     emoji: '⭐', label: 'Estrellas', empty: '☆',  filled: '⭐', fillUp: true  },
+  { key: 'hearts',    emoji: '❤️', label: 'Corazones', empty: '🤍', filled: '❤️', fillUp: true  },
+  { key: 'faces',     emoji: '😊', label: 'Caritas',   empty: '',   filled: '',   fillUp: false,
+    icons: ['😢', '😕', '😐', '🙂', '😄'] },
+  { key: 'trophies',  emoji: '🏆', label: 'Copas',     empty: '🥉', filled: '🏆', fillUp: true  },
+  { key: 'fire',      emoji: '🔥', label: 'Fuego',     empty: '⚪', filled: '🔥', fillUp: true  },
+  { key: 'lightning', emoji: '⚡', label: 'Rayos',     empty: '⚪', filled: '⚡', fillUp: true  },
+  { key: 'muscles',   emoji: '💪', label: 'Fuerza',    empty: '⚪', filled: '💪', fillUp: true  },
+  { key: 'medals',    emoji: '🥇', label: 'Medallas',  empty: '⚪', filled: '🥇', fillUp: true  },
+] as const;
+
+type RatingThemeKey = (typeof RATING_THEMES)[number]['key'];
+
+interface RatingPickerProps {
+  rating: number;
+  theme: RatingThemeKey | string;
+  onChange: (rating: number, theme: string) => void;
+}
+
+const RatingPicker: React.FC<RatingPickerProps> = ({ rating, theme, onChange }) => {
+  const [hover, setHover] = useState(0);
+  const t = RATING_THEMES.find((x) => x.key === theme) ?? RATING_THEMES[0];
+
+  return (
+    <div className="space-y-3">
+      {/* Theme selector */}
+      <div className="flex flex-wrap gap-1.5">
+        {RATING_THEMES.map((th) => (
+          <button
+            key={th.key}
+            type="button"
+            onClick={() => onChange(rating, th.key)}
+            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-all ${
+              theme === th.key
+                ? 'bg-red-500 text-white shadow-sm'
+                : 'border border-slate-200 bg-white text-slate-600 hover:border-red-300 hover:text-red-500'
+            }`}
+          >
+            <span>{th.emoji}</span>
+            <span className="hidden sm:inline">{th.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Rating icons row */}
+      <div className="flex items-center gap-3">
+        {Array.from({ length: 5 }, (_, i) => {
+          const pos = i + 1;
+          const isFaces = !t.fillUp;
+          const active = isFaces
+            ? (hover ? hover === pos : rating === pos)
+            : (hover || rating) >= pos;
+          const icon = isFaces
+            ? (t as { icons: readonly string[] }).icons[i]
+            : (active ? t.filled : t.empty);
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onChange(rating === pos ? 0 : pos, theme)}
+              onMouseEnter={() => setHover(pos)}
+              onMouseLeave={() => setHover(0)}
+              title={`${pos}/5`}
+              className={`text-3xl leading-none transition-all duration-100 select-none
+                hover:scale-125 focus:outline-none
+                ${active ? 'opacity-100 drop-shadow-sm' : 'opacity-25 grayscale'}`}
+            >
+              {icon}
+            </button>
+          );
+        })}
+        {rating > 0 && (
+          <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+            {rating}/5
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** Render a compact rating badge for use inside a report card */
+const RatingDisplay: React.FC<{ rating: number; theme: string }> = ({ rating, theme }) => {
+  if (!rating) return null;
+  const t = RATING_THEMES.find((x) => x.key === theme) ?? RATING_THEMES[0];
+  const isFaces = !t.fillUp;
+  if (isFaces) {
+    const icon = (t as { icons: readonly string[] }).icons[rating - 1];
+    return (
+      <span className="flex items-center gap-1 text-sm">
+        <span className="text-xl leading-none">{icon}</span>
+        <span className="text-xs text-slate-400">{rating}/5</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-0.5">
+      {Array.from({ length: 5 }, (_, i) => (
+        <span key={i} className={`text-sm leading-none ${i < rating ? 'opacity-100' : 'opacity-20 grayscale'}`}>
+          {i < rating ? t.filled : t.empty}
+        </span>
+      ))}
+      <span className="ml-1 text-xs text-slate-400">{rating}/5</span>
+    </span>
+  );
+};
+
+// ---- Module ------------------------------------------------------------------
+
 type StudentView = 'list' | 'details';
 
 interface Props {
@@ -40,7 +152,7 @@ interface StudentRow {
 interface Enrollment { id: string; disciplineId: string; levelId?: string | null; status: string }
 interface Assignment { id: string; teacherId?: string; tutorId?: string; teacherName?: string; tutorName?: string; tutorEmail?: string }
 interface ParentItem { id: string; name?: string | null; firstName?: string | null; lastName?: string | null; email: string }
-interface ReportItem { id: string; type: string; title: string; content?: string | null; summary?: string | null; visibility: string; status: string; authorName?: string; createdAt: string }
+interface ReportItem { id: string; authorId?: string; type: string; title: string; content?: string | null; summary?: string | null; visibility: string; status: string; authorName?: string; authorAvatarUrl?: string | null; createdAt: string; publishedAt?: string | null; rating?: number | null; ratingTheme?: string | null }
 interface ConversationItem { id: string; subject?: string | null; status: string; createdByName?: string; messageCount?: number; updatedAt: string }
 interface MessageItem { id: string; senderId: string; senderName?: string; body: string; createdAt: string }
 
@@ -78,7 +190,9 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [reportForm, setReportForm] = useState({ type: 'PROGRESS', title: '', content: '', summary: '', visibility: 'INTERNAL_STAFF', status: 'DRAFT' });
+  const [reportForm, setReportForm] = useState({ type: 'PROGRESS', title: '', content: '', summary: '', visibility: 'INTERNAL_STAFF', status: 'DRAFT', rating: 0, ratingTheme: 'stars' });
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [reportConfirmDeleteId, setReportConfirmDeleteId] = useState<string | null>(null);
 
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [convModalOpen, setConvModalOpen] = useState(false);
@@ -200,15 +314,63 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
     await loadStudents();
   };
 
+  const rTimeAgo = (v?: string | null): string => {
+    if (!v) return '';
+    const diff = Date.now() - Date.parse(v);
+    if (isNaN(diff)) return '';
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return 'ahora mismo';
+    if (mins < 60) return `hace ${mins} min`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `hace ${hours} h`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `hace ${days} d`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 5) return `hace ${weeks} sem`;
+    return `hace ${Math.floor(days / 30)} mes`;
+  };
+
+  const rFormatDate = (v?: string | null) => {
+    if (!v) return { date: '—', time: '' };
+    const ms = Date.parse(v);
+    if (isNaN(ms)) return { date: '—', time: '' };
+    const d = new Date(ms);
+    return {
+      date: d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }),
+      time: d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+    };
+  };
+
+  const openEditReport = (r: ReportItem) => {
+    setEditingReportId(r.id);
+    setReportForm({ type: r.type, title: r.title, content: r.content || '', summary: r.summary || '', visibility: r.visibility, status: r.status, rating: r.rating ?? 0, ratingTheme: r.ratingTheme || 'stars' });
+    setReportModalOpen(true);
+  };
+
+  const handleDeleteReport = async (id: string) => {
+    if (!selected) return;
+    try {
+      const res = await fetch(`/api/students/${selected.id}/reports/${id}`, { method: 'DELETE' });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setReportConfirmDeleteId(null);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+    } catch (e: any) { setError(e.message || t('students.errorSave')); }
+  };
+
   const submitReport = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
     if (!reportForm.title.trim()) return;
     try {
-      const res = await fetch(`/api/students/${selected.id}/reports`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reportForm) });
+      const url = editingReportId
+        ? `/api/students/${selected.id}/reports/${editingReportId}`
+        : `/api/students/${selected.id}/reports`;
+      const method = editingReportId ? 'PUT' : 'POST';
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reportForm) });
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
       setReportModalOpen(false);
-      setReportForm({ type: 'PROGRESS', title: '', content: '', summary: '', visibility: 'INTERNAL_STAFF', status: 'DRAFT' });
+      setEditingReportId(null);
+      setReportForm({ type: 'PROGRESS', title: '', content: '', summary: '', visibility: 'INTERNAL_STAFF', status: 'DRAFT', rating: 0, ratingTheme: 'stars' });
       await loadDetails(selected.id);
     } catch (e: any) { setError(e.message || t('students.errorSave')); }
   };
@@ -513,19 +675,108 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
         {activeTab === 'Reports' && (
           <div className="px-1">
-            <div className="mb-4 flex justify-end"><button onClick={() => setReportModalOpen(true)} className={primaryBtn}><i className="fa-solid fa-plus" /> {t('students.newReport')}</button></div>
+            <div className="mb-4 flex justify-end">
+              <button
+                onClick={() => { setEditingReportId(null); setReportForm({ type: 'PROGRESS', title: '', content: '', summary: '', visibility: 'INTERNAL_STAFF', status: 'DRAFT' }); setReportModalOpen(true); }}
+                className={primaryBtn}
+              >
+                <i className="fa-solid fa-plus" /> {t('students.newReport')}
+              </button>
+            </div>
             {reports.length === 0 ? <Empty text={t('students.noReports')} /> : (
-              <div className="space-y-2">
-                {reports.map((r) => (
-                  <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-slate-900">{r.title}</p>
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${r.status === 'PUBLISHED' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>{labelize(r.status)}</span>
+              <div className="space-y-3">
+                {reports.map((r) => {
+                  const ref = r.publishedAt ?? r.createdAt;
+                  const { date, time } = rFormatDate(ref);
+                  const ago = rTimeAgo(ref);
+                  const initials = (r.authorName || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+                  const isConfirmingDelete = reportConfirmDeleteId === r.id;
+                  const statusCfg = r.status === 'PUBLISHED'
+                    ? { pill: 'bg-emerald-50 text-emerald-700 border border-emerald-200', dot: 'bg-emerald-400', label: 'Publicado' }
+                    : r.status === 'DRAFT'
+                    ? { pill: 'bg-amber-50 text-amber-600 border border-amber-200', dot: 'bg-amber-400', label: 'Borrador' }
+                    : { pill: 'bg-slate-100 text-slate-500 border border-slate-200', dot: 'bg-slate-400', label: labelize(r.status) };
+                  return (
+                    <div key={r.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                      {/* Header row: avatar + meta + status */}
+                      <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
+                        {r.authorAvatarUrl ? (
+                          <img src={r.authorAvatarUrl} alt={r.authorName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-400 to-rose-500 text-xs font-bold text-white">
+                            {initials}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-800">{r.authorName || '—'}</p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0 text-[11px] text-slate-400">
+                            <span>{date}</span>
+                            {time && <><span className="inline-block h-0.5 w-0.5 rounded-full bg-slate-300" /><span>{time}</span></>}
+                            {ago && <><span className="inline-block h-0.5 w-0.5 rounded-full bg-slate-300" /><span>{ago}</span></>}
+                          </div>
+                        </div>
+                        <span className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${statusCfg.pill}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${statusCfg.dot}`} />
+                          {statusCfg.label}
+                        </span>
+                      </div>
+                      {/* Body */}
+                      <div className="px-4 py-3">
+                        <div className="mb-1 flex items-start justify-between gap-2">
+                          <p className="text-sm font-bold text-slate-900">{r.title}</p>
+                          <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{labelize(r.type)}</span>
+                        </div>
+                        {r.summary && <p className="mt-1 text-xs font-medium text-slate-600">{r.summary}</p>}
+                        {r.content && <p className="mt-1.5 text-xs leading-relaxed text-slate-500">{r.content}</p>}
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-400">{labelize(r.visibility)}</span>
+                            {r.rating ? <RatingDisplay rating={r.rating} theme={r.ratingTheme || 'stars'} /> : null}
+                          </div>
+                          <div className="flex gap-1.5">
+                            <Button
+                              type="button" mode="icon" size="sm" variant="outline"
+                              className="size-7 text-slate-500 hover:border-blue-300 hover:text-blue-600"
+                              onClick={() => openEditReport(r)}
+                              aria-label={t('students.editReport')}
+                            >
+                              <Pencil className="size-3" />
+                            </Button>
+                            <Button
+                              type="button" mode="icon" size="sm" variant="outline"
+                              className="size-7 text-destructive hover:bg-destructive/10"
+                              onClick={() => setReportConfirmDeleteId(r.id)}
+                              aria-label={t('students.deleteReport')}
+                            >
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        {isConfirmingDelete && (
+                          <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5">
+                            <p className="text-xs font-semibold text-red-700">{t('students.deleteReportConfirm')}</p>
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                className="flex-1 rounded-lg bg-red-500 py-1.5 text-xs font-semibold text-white hover:bg-red-600"
+                                onClick={() => handleDeleteReport(r.id)}
+                                type="button"
+                              >
+                                {t('students.deleteReport')}
+                              </button>
+                              <button
+                                className="flex-1 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                onClick={() => setReportConfirmDeleteId(null)}
+                                type="button"
+                              >
+                                {t('students.cancel')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-400">{labelize(r.type)} · {labelize(r.visibility)} · {r.authorName}</p>
-                    {r.summary && <p className="mt-2 text-xs text-slate-600">{r.summary}</p>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -579,7 +830,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
 
         {studentModalOpen && StudentForm()}
         {reportModalOpen && (
-          <Modal title={t('students.newReport')} onClose={() => setReportModalOpen(false)}>
+          <Modal title={editingReportId ? t('students.editReport') : t('students.newReport')} onClose={() => { setReportModalOpen(false); setEditingReportId(null); }}>
             <form onSubmit={submitReport} className="space-y-4">
               <Field label={t('students.reportTitle')}><input className={inputClass} value={reportForm.title} onChange={(e) => setReportForm({ ...reportForm, title: e.target.value })} required /></Field>
               <div className="grid grid-cols-2 gap-3">
@@ -588,8 +839,20 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
               </div>
               <Field label={t('students.summary')}><input className={inputClass} value={reportForm.summary} onChange={(e) => setReportForm({ ...reportForm, summary: e.target.value })} /></Field>
               <Field label={t('students.content')}><textarea className={inputClass} rows={4} value={reportForm.content} onChange={(e) => setReportForm({ ...reportForm, content: e.target.value })} /></Field>
-              <Field label={t('students.status')}><select className={inputClass} value={reportForm.status} onChange={(e) => setReportForm({ ...reportForm, status: e.target.value })}><option value="DRAFT">Draft</option><option value="PUBLISHED">Published</option></select></Field>
-              <ModalActions onCancel={() => setReportModalOpen(false)} cancel={t('students.cancel')} save={t('students.save')} />
+              <Field label={t('students.status')}><select className={inputClass} value={reportForm.status} onChange={(e) => setReportForm({ ...reportForm, status: e.target.value })}><option value="DRAFT">Borrador</option><option value="PUBLISHED">Publicado</option></select></Field>
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  {t('students.rating')}
+                </label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <RatingPicker
+                    rating={reportForm.rating}
+                    theme={reportForm.ratingTheme}
+                    onChange={(r, th) => setReportForm({ ...reportForm, rating: r, ratingTheme: th })}
+                  />
+                </div>
+              </div>
+              <ModalActions onCancel={() => { setReportModalOpen(false); setEditingReportId(null); }} cancel={t('students.cancel')} save={t('students.save')} />
             </form>
           </Modal>
         )}

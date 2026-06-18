@@ -99,7 +99,8 @@ const CORE_CATALOG_BASE: Array<Omit<CatalogEntry, 'label'> & { labelKey: string 
   { id: 'core:StorageSettings', labelKey: 'sidebar.storage', icon: 'fa-database', viewKey: 'StorageSettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true },
   { id: 'core:CategorySettings', labelKey: 'sidebar.categories', icon: 'fa-tags', viewKey: 'CategorySettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true },
   { id: 'core:ReferenceSettings', labelKey: 'sidebar.references', icon: 'fa-hashtag', viewKey: 'ReferenceSettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true },
-  { id: 'core:MenuSettings', labelKey: 'sidebar.menus', icon: 'fa-bars-staggered', viewKey: 'MenuSettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true }
+  { id: 'core:MenuSettings', labelKey: 'sidebar.menus', icon: 'fa-bars-staggered', viewKey: 'MenuSettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true },
+  { id: 'core:AppBrandingSettings', labelKey: 'sidebar.appBranding', icon: 'fa-palette', viewKey: 'AppBrandingSettings', targetType: 'STATIC_VIEW', moduleCode: null, origin: 'core', enabled: true }
 ];
 
 const MenuManagement: React.FC<MenuManagementProps> = ({ clientModules, activeModuleCodes, apiBasePath = '/api/menu-config', defaultHeaders }) => {

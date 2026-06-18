@@ -1,5 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
+import path from 'path';
+import multer from 'multer';
 import type { Pool } from 'pg';
 import {
   resolveTenantAuthContext,
@@ -7,8 +9,11 @@ import {
   getRequesterUserId,
   ensureRole,
   NATACION_ROLES,
+  putObject,
   type RequesterScope
 } from '@sinapsis/module-sdk-server';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 interface TeachersModuleContext {
   app: express.Express;
@@ -38,6 +43,8 @@ export default function registerTeachersModule({ app, pool }: TeachersModuleCont
     if (columnsEnsured) return;
     await pool.query('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "phone" TEXT');
     await pool.query('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "document" TEXT');
+    await pool.query('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT');
+    await pool.query('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "coverUrl" TEXT');
     columnsEnsured = true;
   };
 
@@ -67,7 +74,8 @@ export default function registerTeachersModule({ app, pool }: TeachersModuleCont
   const loadTeacher = async (id: string) => {
     const r = await pool.query(
       `SELECT u.id, u.email, u.name, u."firstName", u."lastName", u.phone, u.document,
-              u."companyId", c.name AS "companyName", u."createdAt"
+              u."companyId", c.name AS "companyName", u."createdAt",
+              u."imageUrl", u."coverUrl"
        FROM "User" u JOIN "Company" c ON c.id = u."companyId"
        WHERE u.id = $1 LIMIT 1`,
       [id]
@@ -129,7 +137,7 @@ export default function registerTeachersModule({ app, pool }: TeachersModuleCont
       params.push(NATACION_ROLES.PROFESOR);
       const result = await pool.query(
         `SELECT u.id, u.email, u.name, u."firstName", u."lastName", u.phone, u.document,
-                u."companyId", c.name AS "companyName", u."createdAt"
+                u."companyId", c.name AS "companyName", u."createdAt", u."imageUrl"
          FROM "User" u
          JOIN "Company" c ON c.id = u."companyId"
          JOIN "Role" r ON r.id = u."roleId"
@@ -140,6 +148,185 @@ export default function registerTeachersModule({ app, pool }: TeachersModuleCont
       res.json(result.rows);
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to fetch teachers', details: error.message });
+    }
+  });
+
+  // ---- Get one --------------------------------------------------------------
+  router.get('/:id', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      await ensureColumns();
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      res.json(await loadTeacher(req.params.id));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch teacher', details: error.message });
+    }
+  });
+
+  // ---- Classes for a teacher ------------------------------------------------
+  router.get('/:id/classes', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      if (!(await tableExists('ClassTeacher'))) return res.json([]);
+      const hasDisciplines = await tableExists('Discipline');
+      const r = await pool.query(
+        `SELECT cl.id, cl.name, cl."companyId", cl.status, c.name AS "companyName",
+                ${hasDisciplines ? `(SELECT d.name FROM "Discipline" d WHERE d.id = cl."disciplineId")` : 'NULL'} AS "disciplineName"
+         FROM "ClassTeacher" ct
+         JOIN "Class" cl ON cl.id = ct."classId"
+         JOIN "Company" c ON c.id = cl."companyId"
+         WHERE ct."teacherId" = $1 AND ct.active = true
+         ORDER BY cl.name ASC`,
+        [req.params.id]
+      );
+      res.json(r.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch teacher classes', details: error.message });
+    }
+  });
+
+  // ---- Image upload (logo / cover) ------------------------------------------
+  router.post('/:id/image', upload.single('file'), async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      await ensureColumns();
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'file is required.' });
+
+      const kind = String(req.body?.kind || 'logo').trim() === 'cover' ? 'cover' : 'logo';
+      const column = kind === 'cover' ? 'coverUrl' : 'imageUrl';
+
+      const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
+      const org = orgResult.rows[0] || { name: 'org', id: '1' };
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const filename = `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
+      const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + String(org.id).split('-')[0];
+      const objectKey = `${orgFolderName}/teachers/${req.params.id}/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
+
+      await pool.query(`UPDATE "User" SET "${column}" = $1, "updatedAt" = NOW() WHERE id = $2`, [fileUrl, req.params.id]);
+      res.json(await loadTeacher(req.params.id));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to upload image', details: error.message });
+    }
+  });
+
+  // ---- Assign teacher to a class --------------------------------------------
+  router.post('/:id/classes', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      if (!(await tableExists('ClassTeacher'))) return res.status(409).json({ error: 'Classes module not available.' });
+      const classId = String(req.body?.classId || '').trim();
+      if (!classId) return res.status(400).json({ error: 'classId is required.' });
+      const cls = await pool.query(
+        `SELECT cl.id FROM "Class" cl JOIN "Company" c ON c.id = cl."companyId" WHERE cl.id = $1 AND c."organizationId" = $2 LIMIT 1`,
+        [classId, auth.organizationId]
+      );
+      if (!cls.rows[0]) return res.status(404).json({ error: 'Class not found.' });
+      await pool.query(
+        `INSERT INTO "ClassTeacher" (id, "classId", "teacherId", active, "assignedAt")
+         VALUES ($1, $2, $3, true, NOW())
+         ON CONFLICT ("classId", "teacherId") DO UPDATE SET active = true, "assignedAt" = NOW()`,
+        [crypto.randomUUID(), classId, req.params.id]
+      );
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to assign class', details: error.message });
+    }
+  });
+
+  // ---- Remove teacher from a class ------------------------------------------
+  router.delete('/:id/classes/:classId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      if (!(await tableExists('ClassTeacher'))) return res.json({ success: true });
+      await pool.query('DELETE FROM "ClassTeacher" WHERE "teacherId" = $1 AND "classId" = $2', [req.params.id, req.params.classId]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to remove from class', details: error.message });
+    }
+  });
+
+  // ---- Students taught by this teacher (via ClassTeacher → ClassStudent) ----
+  router.get('/:id/students', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      if (!(await tableExists('ClassTeacher')) || !(await tableExists('ClassStudent'))) return res.json([]);
+      const hasStudent = await pool.query(`SELECT to_regclass('public."Student"') AS t`);
+      if (!hasStudent.rows[0]?.t) return res.json([]);
+      const r = await pool.query(
+        `SELECT DISTINCT s.id, s."firstName", s."lastName", s.email, s.code AS "studentCode",
+                cl.id AS "classId", cl.name AS "className", c.name AS "companyName",
+                cs.status AS "enrollmentStatus"
+         FROM "ClassTeacher" ct
+         JOIN "Class" cl ON cl.id = ct."classId"
+         JOIN "Company" c ON c.id = cl."companyId"
+         JOIN "ClassStudent" cs ON cs."classId" = cl.id AND cs.status = 'ACTIVE'
+         JOIN "Student" s ON s.id = cs."studentId"
+         WHERE ct."teacherId" = $1 AND ct.active = true AND c."organizationId" = $2
+         ORDER BY s."lastName" ASC, s."firstName" ASC`,
+        [req.params.id, auth.organizationId]
+      );
+      res.json(r.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch students', details: error.message });
+    }
+  });
+
+  // ---- Available classes (to pick from when assigning) ----------------------
+  router.get('/:id/available-classes', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Teachers module is not active.' });
+      const auth = await authStaff(req, res);
+      if (!auth) return;
+      const target = await findInScope(auth, req.params.id);
+      if (!target) return res.status(404).json({ error: 'Teacher not found.' });
+      if (!(await tableExists('ClassTeacher'))) {
+        const all = await pool.query(
+          `SELECT cl.id, cl.name, cl.status, c.name AS "companyName" FROM "Class" cl
+           JOIN "Company" c ON c.id = cl."companyId"
+           WHERE c."organizationId" = $1 ORDER BY cl.name ASC`,
+          [auth.organizationId]
+        );
+        return res.json(all.rows);
+      }
+      const r = await pool.query(
+        `SELECT cl.id, cl.name, cl.status, c.name AS "companyName"
+         FROM "Class" cl
+         JOIN "Company" c ON c.id = cl."companyId"
+         WHERE c."organizationId" = $1
+           AND cl.id NOT IN (
+             SELECT "classId" FROM "ClassTeacher" WHERE "teacherId" = $2 AND active = true
+           )
+         ORDER BY cl.name ASC`,
+        [auth.organizationId, req.params.id]
+      );
+      res.json(r.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch available classes', details: error.message });
     }
   });
 

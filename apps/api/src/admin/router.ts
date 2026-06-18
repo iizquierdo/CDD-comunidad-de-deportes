@@ -502,6 +502,28 @@ export const createAdminRouter = async ({ prisma, pool }: CreateAdminRouterArgs)
     }
   });
 
+  router.get('/organizations/:id', async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id is required' });
+      const org = await prisma.organization.findUnique({
+        where: { id },
+        include: {
+          _count: { select: { companies: true } },
+          subscriptionPlan: { select: { id: true, code: true, name: true, status: true } }
+        }
+      });
+      if (!org) return res.status(404).json({ error: 'Organization not found' });
+      const userCounts = await pool.query(
+        `SELECT COUNT(u.id)::int AS "usersCount" FROM "Company" c LEFT JOIN "User" u ON u."companyId" = c.id WHERE c."organizationId" = $1`,
+        [id]
+      );
+      return res.json({ ...org, usersCount: Number(userCounts.rows[0]?.usersCount || 0) });
+    } catch (error: any) {
+      return res.status(500).json({ error: 'Failed to fetch organization', details: error?.message || String(error) });
+    }
+  });
+
   router.put('/organizations/:id', async (req, res) => {
     try {
       const id = String(req.params.id || '').trim();
@@ -514,6 +536,96 @@ export const createAdminRouter = async ({ prisma, pool }: CreateAdminRouterArgs)
       if (error?.code === 'P2025') return res.status(404).json({ error: 'Organization not found' });
       const status = error?.status || 500;
       return res.status(status).json({ error: error?.message || 'Failed to update organization', details: error?.message });
+    }
+  });
+
+  router.get('/organizations/:id/branding', async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id is required' });
+      const result = await pool.query(
+        `SELECT "appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
+        [id]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: 'Organization not found' });
+      return res.json(result.rows[0]);
+    } catch (error: any) {
+      return res.status(500).json({ error: 'Failed to fetch branding', details: error?.message || String(error) });
+    }
+  });
+
+  router.put('/organizations/:id/branding', async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id is required' });
+      const body = req.body || {};
+      const data: Record<string, unknown> = {};
+      if (body.appName !== undefined) {
+        const v = String(body.appName ?? '').trim().slice(0, 200);
+        data.appName = v || null;
+      }
+      for (const key of ['logoUrl', 'isologoUrl', 'faviconUrl', 'backgroundImageUrl']) {
+        if (body[key] !== undefined) {
+          const v = String(body[key] ?? '').trim();
+          data[key] = v ? v.slice(0, 2000) : null;
+        }
+      }
+      for (const key of ['primaryColor', 'secondaryColor']) {
+        if (body[key] !== undefined) {
+          const v = String(body[key] ?? '').trim();
+          if (v && !isLikelyColor(v)) return res.status(400).json({ error: `Invalid ${key}` });
+          data[key] = v || null;
+        }
+      }
+      if (body.slogan !== undefined) {
+        const v = String(body.slogan ?? '').trim().slice(0, 300);
+        data.slogan = v || null;
+      }
+      if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No fields to update' });
+      const keys = Object.keys(data);
+      const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
+      await pool.query(
+        `UPDATE "Organization" SET ${setClause}, "updatedAt" = NOW() WHERE id = $${keys.length + 1}`,
+        [...Object.values(data), id]
+      );
+      const result = await pool.query(
+        `SELECT "appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
+        [id]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: 'Organization not found' });
+      return res.json(result.rows[0]);
+    } catch (error: any) {
+      return res.status(500).json({ error: 'Failed to update branding', details: error?.message || String(error) });
+    }
+  });
+
+  router.post('/organizations/:id/branding/upload', uploadMemory.single('file'), async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id is required' });
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'No file uploaded' });
+      const type = String(req.body?.type || '').trim().toLowerCase();
+      if (!['logourl', 'isologourl', 'faviconurl', 'backgroundimageurl'].includes(type)) {
+        return res.status(400).json({ error: 'type must be logoUrl, isologoUrl, faviconUrl, or backgroundImageUrl' });
+      }
+      const fieldMap: Record<string, string> = { logourl: 'logoUrl', isologourl: 'isologoUrl', faviconurl: 'faviconUrl', backgroundimageurl: 'backgroundImageUrl' };
+      const field = fieldMap[type];
+      const ext = path.extname(file.originalname) || (type === 'faviconurl' ? '.ico' : '.png');
+      const filename = `${type}_${id.slice(0, 8)}_${Date.now()}${ext}`;
+      const { url } = await putObject({
+        pool,
+        key: `orgs/${id}/${filename}`,
+        buffer: file.buffer,
+        contentType: file.mimetype
+      });
+      await pool.query(
+        `UPDATE "Organization" SET "${field}" = $1, "updatedAt" = NOW() WHERE id = $2`,
+        [url, id]
+      );
+      return res.json({ success: true, url, type: field });
+    } catch (error: any) {
+      return res.status(500).json({ error: 'Failed to upload branding asset', details: error?.message || String(error) });
     }
   });
 

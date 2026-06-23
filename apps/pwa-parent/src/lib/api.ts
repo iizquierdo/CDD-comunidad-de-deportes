@@ -1,5 +1,6 @@
 import axios from "axios";
 import { tokenStorage } from "./token-storage";
+import { getTenantId } from "./tenant";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
@@ -12,6 +13,10 @@ api.interceptors.request.use((config) => {
   const token = tokenStorage.get();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  const tenantId = getTenantId();
+  if (tenantId) {
+    config.headers["X-Tenant-Id"] = tenantId;
   }
   return config;
 });

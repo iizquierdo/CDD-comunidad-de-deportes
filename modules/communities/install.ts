@@ -36,7 +36,7 @@ export default async function installCommunitiesModule(ctx: InstallContext) {
   await grantModulePermission(pool, { roleName: NATACION_ROLES.SUPER_ADMIN, moduleCode, canRead: true, canCreate: true, canWrite: true, canDelete: true });
   await grantModulePermission(pool, { roleName: NATACION_ROLES.ADMIN_SEDE, moduleCode, canRead: true, canCreate: true, canWrite: true, canDelete: true });
   await grantModulePermission(pool, { roleName: NATACION_ROLES.PROFESOR, moduleCode, canRead: true });
-  await grantModulePermission(pool, { roleName: NATACION_ROLES.TUTOR, moduleCode, canRead: true });
+  await grantModulePermission(pool, { roleName: NATACION_ROLES.TUTOR, moduleCode, canRead: true, canCreate: true, canWrite: true, canDelete: true });
 
   await seedModuleMenu(pool, {
     moduleCode,

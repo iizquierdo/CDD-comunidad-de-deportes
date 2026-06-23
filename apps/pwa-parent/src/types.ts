@@ -10,6 +10,7 @@ export interface AuthUser {
   sedeId?: string | null;
   sedeName?: string | null;
   status?: "ACTIVE" | "INACTIVE";
+  avatarUrl?: string | null;
 }
 
 export interface PaginatedResponse<T> {
@@ -33,6 +34,7 @@ export interface Discipline {
   name: string;
   description?: string | null;
   imageUrl?: string | null;
+  coverUrl?: string | null;
   active: boolean;
 }
 
@@ -48,13 +50,46 @@ export interface SedeRef {
   name: string;
 }
 
+export interface ClassScheduleSlot {
+  dayOfWeek: number;
+  startTime: string;
+  endTime?: string;
+}
+
+export interface ClassTeacherRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+  avatarUrl?: string | null;
+}
+
+export interface StudentClass {
+  id: string;
+  classId: string;
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+  description?: string | null;
+  imageUrl?: string | null;
+  coverUrl?: string | null;
+  disciplineId?: string | null;
+  disciplineName?: string | null;
+  levelName?: string | null;
+  levelDescription?: string | null;
+  levelOrder?: number | null;
+  schedules?: ClassScheduleSlot[];
+  teachers?: ClassTeacherRef[];
+}
+
 export interface StudentSummary {
   id: string;
   firstName: string;
   lastName: string;
   status: "ACTIVE" | "INACTIVE";
+  imageUrl?: string | null;
   sede?: SedeRef | null;
   disciplines?: StudentDiscipline[];
+  classes?: StudentClass[];
+  teachers?: ClassTeacherRef[];
 }
 
 export type CommunityPostStatus = "DRAFT" | "PUBLISHED" | "UNPUBLISHED" | "ARCHIVED";
@@ -92,6 +127,18 @@ export interface CommunityMember {
   };
 }
 
+export interface CommunityPostComment {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  authorId: string;
+  authorName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatarUrl?: string | null;
+}
+
 export interface CommunityPostAttachment {
   id?: string;
   fileName: string;
@@ -113,6 +160,9 @@ export interface CommunityPost {
   updatedAt?: string;
   author: UserRef;
   attachments: CommunityPostAttachment[];
+  likesCount?: number;
+  commentsCount?: number;
+  likedByMe?: boolean;
 }
 
 export interface CommunityDetail extends Community {
@@ -144,6 +194,26 @@ export interface DisciplineResource {
   createdAt?: string;
   updatedAt?: string;
 }
+
+export interface ClassResource {
+  id: string;
+  classId: string;
+  title: string;
+  description?: string | null;
+  type: DisciplineResourceType;
+  resourceUrl?: string | null;
+  storageKey?: string | null;
+  thumbnailUrl?: string | null;
+  visibility: DisciplineResourceVisibility;
+  publishedAt?: string | null;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type LibraryResource =
+  | (DisciplineResource & { source: "discipline" })
+  | (ClassResource & { source: "class" });
 
 export type ConversationStatus = "OPEN" | "CLOSED" | "ARCHIVED";
 
@@ -220,6 +290,8 @@ export interface GlobalSettings {
   id: number;
   appName: string;
   logoUrl?: string | null;
+  isologoUrl?: string | null;
+  loginBackgroundUrl?: string | null;
   primaryColor: string;
   secondaryColor: string;
   accentColor: string;

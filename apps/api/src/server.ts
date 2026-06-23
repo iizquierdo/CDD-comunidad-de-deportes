@@ -732,7 +732,11 @@ const moduleAuthorizationMiddleware = (moduleCode: string) => {
             }
 
             const userResult = await pool.query(
-                'SELECT id, role, "roleId" FROM "User" WHERE "sessionToken" = $1 LIMIT 1',
+                `SELECT u.id, u.role, u."roleId", COALESCE(r.name, '') AS "roleName"
+                 FROM "User" u
+                 LEFT JOIN "Role" r ON r.id = u."roleId"
+                 WHERE u."sessionToken" = $1
+                 LIMIT 1`,
                 [token]
             );
             const user = userResult.rows[0];
@@ -744,13 +748,29 @@ const moduleAuthorizationMiddleware = (moduleCode: string) => {
             (req as any).authRoleId = user.roleId ? String(user.roleId) : '';
 
             const legacyRole = String(user.role || '').trim().toLowerCase();
+            const roleName = String(user.roleName || '').trim().toLowerCase();
             if (legacyRole === 'administrator' || legacyRole === 'admin') {
                 return next();
             }
 
+            const moduleCodeUpper = String(moduleCode || '').toUpperCase();
+            const requestPath = `${subPath} ${origPath}`;
+            const isCommunitySocialInteraction =
+                moduleCodeUpper === 'COMMUNITIES' && /\/posts\/[^/]+\/(comments|like)/.test(requestPath);
+
             // Professors and sede admins can create/edit/delete their own community posts
-            const isProfesor = legacyRole === 'profesor' || legacyRole === 'professor' || legacyRole === 'admin sede';
-            if (isProfesor && String(moduleCode || '').toUpperCase() === 'COMMUNITIES') {
+            const isProfesor =
+                legacyRole === 'profesor' ||
+                legacyRole === 'professor' ||
+                legacyRole === 'admin sede' ||
+                roleName === 'profesor';
+            if (isProfesor && moduleCodeUpper === 'COMMUNITIES') {
+                return next();
+            }
+
+            // Tutors/parents may like and comment on posts in their children's communities
+            const isTutor = legacyRole === 'tutor' || roleName === 'tutor';
+            if (isTutor && isCommunitySocialInteraction) {
                 return next();
             }
 

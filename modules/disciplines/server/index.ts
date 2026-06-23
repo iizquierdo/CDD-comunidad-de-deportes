@@ -147,7 +147,7 @@ export default function registerDisciplinesModule({ app, pool }: DisciplinesModu
       const visibilities = allowedVisibilities(scope);
       const placeholders = visibilities.map((_, i) => `$${i + 1}`).join(', ');
       const result = await pool.query(
-        `SELECT r.*, d.name AS "disciplineName", u.name AS "createdByName"
+        `SELECT r.*, d.name AS "disciplineName", d."imageUrl" AS "disciplineImageUrl", u.name AS "createdByName"
          FROM "DisciplineResource" r
          JOIN "Discipline" d ON d.id = r."disciplineId"
          LEFT JOIN "User" u ON u.id = r."createdById"

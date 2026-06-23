@@ -1,7 +1,8 @@
 import { useMemo } from "react";
+import { ClassLevelCard } from "../components/ClassLevelCard";
 import { MaterialIcon } from "../components/MaterialIcon";
 import { useStudents } from "../context/StudentContext";
-import type { StudentDiscipline, StudentSummary } from "../types";
+import type { ClassTeacherRef, StudentClass, StudentDiscipline, StudentSummary } from "../types";
 
 const fallbackStudent: StudentSummary = {
   id: "demo-mateo",
@@ -39,6 +40,45 @@ const getDisciplineIcon = (name: string) => {
   return "sports";
 };
 
+type LevelCardItem = {
+  id: string;
+  name: string;
+  coverUrl?: string | null;
+  imageUrl?: string | null;
+  iconName: string;
+  levelOrder?: number | null;
+  levelName?: string | null;
+  description?: string | null;
+  teachers?: ClassTeacherRef[];
+};
+
+const mapClassToCard = (item: StudentClass): LevelCardItem => ({
+  id: item.id,
+  name: item.name,
+  coverUrl: item.coverUrl,
+  imageUrl: item.imageUrl,
+  iconName: getDisciplineIcon(item.disciplineName || item.name),
+  levelOrder: item.levelOrder,
+  levelName: item.levelName,
+  description: item.levelDescription ?? item.description ?? null,
+  teachers: item.teachers
+});
+
+const mapDisciplineToCard = (
+  item: StudentDiscipline,
+  teachers: ClassTeacherRef[] = []
+): LevelCardItem => ({
+  id: item.id,
+  name: item.discipline.name,
+  coverUrl: item.discipline.coverUrl,
+  imageUrl: item.discipline.imageUrl,
+  iconName: getDisciplineIcon(item.discipline.name),
+  levelOrder: item.level?.levelOrder,
+  levelName: item.level?.name,
+  description: item.level?.description ?? item.discipline.description ?? null,
+  teachers
+});
+
 export const NivelesPage = () => {
   const { selectedStudent, students, loading, error } = useStudents();
 
@@ -50,13 +90,22 @@ export const NivelesPage = () => {
     [athlete.disciplines]
   );
 
-  const discipline = activeDisciplines[0] ?? null;
-  const levelOrder = discipline?.level?.levelOrder;
-  const levelProgress = discipline ? Math.min(95, 55 + (levelOrder ?? 1) * 10) : 40;
-  const levelName = discipline?.level?.name ?? "En Preparación";
-  const levelDescription =
-    discipline?.level?.description ??
-    "Continúa reforzando técnica, constancia y hábitos de entrenamiento.";
+  const activeClasses = useMemo(
+    () => (athlete.classes ?? []).filter((c) => c.status === "ACTIVE"),
+    [athlete.classes]
+  );
+
+  const levelCards = useMemo((): LevelCardItem[] => {
+    if (activeClasses.length > 0) {
+      return activeClasses.map(mapClassToCard);
+    }
+    return activeDisciplines.map((item) => mapDisciplineToCard(item, athlete.teachers ?? []));
+  }, [activeClasses, activeDisciplines, athlete.teachers]);
+
+  const primaryCard = levelCards[0] ?? null;
+  const levelOrder = primaryCard?.levelOrder;
+  const levelProgress = primaryCard ? Math.min(95, 55 + (levelOrder ?? 1) * 10) : 40;
+  const levelName = primaryCard?.levelName ?? "En Preparación";
 
   if (loading && !selectedStudent) {
     return (
@@ -83,25 +132,33 @@ export const NivelesPage = () => {
 
       <div className="grid grid-cols-2 gap-3">
 
-        {/* Level hero */}
-        <div className="col-span-2 relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-500 to-blue-600 p-6 text-white">
-          <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full bg-white/10" />
-          <div className="pointer-events-none absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-white/5" />
-          <div className="relative">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/20">
-              <MaterialIcon
-                name={getDisciplineIcon(discipline?.discipline.name ?? "")}
-                filled
-                className="text-3xl text-white"
-              />
-            </div>
-            <span className="inline-flex items-center rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold uppercase tracking-widest">
-              Nivel {levelOrder ?? 1}
-            </span>
-            <h1 className="mt-3 text-2xl font-bold">{levelName}</h1>
-            <p className="mt-2 text-sm leading-relaxed text-white/70">{levelDescription}</p>
-          </div>
-        </div>
+        {/* Class / level cards */}
+        {levelCards.length > 0 ? (
+          levelCards.map((card) => (
+            <ClassLevelCard
+              key={card.id}
+              coverUrl={card.coverUrl}
+              description={
+                card.description ??
+                "Continúa reforzando técnica, constancia y hábitos de entrenamiento."
+              }
+              iconName={card.iconName}
+              imageUrl={card.imageUrl}
+              levelName={card.levelName}
+              levelOrder={card.levelOrder}
+              name={card.name}
+              teachers={card.teachers}
+            />
+          ))
+        ) : (
+          <ClassLevelCard
+            description="Continúa reforzando técnica, constancia y hábitos de entrenamiento."
+            iconName="sports"
+            levelName="En Preparación"
+            levelOrder={0}
+            name="Sin clase activa"
+          />
+        )}
 
         {/* Progress */}
         <div className="rounded-3xl bg-purple-50 p-4">
@@ -238,7 +295,7 @@ export const NivelesPage = () => {
               {athlete.firstName} {athlete.lastName}
             </span>{" "}
             ·{" "}
-            <span>{discipline?.discipline.name ?? "Sin disciplina activa"}</span>
+            <span>{primaryCard?.name ?? "Sin disciplina activa"}</span>
             {" · "}
             <span>Nivel {levelName}</span>
           </p>

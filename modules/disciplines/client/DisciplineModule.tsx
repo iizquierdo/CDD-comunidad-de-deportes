@@ -110,7 +110,7 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
 
   const [selected, setSelected] = useState<DisciplineItem | null>(null);
   const [resources, setResources] = useState<ResourceItem[]>([]);
-  const [allResources, setAllResources] = useState<(ResourceItem & { disciplineName?: string })[]>([]);
+  const [allResources, setAllResources] = useState<(ResourceItem & { disciplineName?: string; disciplineImageUrl?: string | null })[]>([]);
   const [allResourcesLoading, setAllResourcesLoading] = useState(false);
   const [meta, setMeta] = useState<{ resourceTypes: MetaItem[]; visibilities: MetaItem[] }>({ resourceTypes: [], visibilities: [] });
   const [activeTab, setActiveTab] = useState<'Overview' | 'Resources' | 'Classes'>('Overview');
@@ -634,14 +634,8 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
     );
   }, [allResources, resourceSearch]);
 
-  const resourceColumns = useMemo<ColumnDef<ResourceItem & { disciplineName?: string }>[]>(
+  const resourceColumns = useMemo<ColumnDef<ResourceItem & { disciplineName?: string; disciplineImageUrl?: string | null }>[]>(
     () => [
-      {
-        id: 'discipline',
-        accessorFn: (row) => row.disciplineName || '—',
-        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.discipline')} />,
-        cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.original.disciplineName || '—'}</span>
-      },
       {
         id: 'title',
         accessorFn: (row) => row.title,
@@ -664,6 +658,26 @@ const DisciplineModule: React.FC<DisciplineModuleProps> = ({ view, setView, curr
         accessorFn: (row) => row.visibility,
         header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.visibility')} />,
         cell: ({ row }) => <span className="text-xs text-muted-foreground">{labelize(row.original.visibility)}</span>
+      },
+      {
+        id: 'discipline',
+        accessorFn: (row) => row.disciplineName || '—',
+        header: ({ column }) => <DataGridColumnHeader column={column} title={t('disciplines.discipline')} />,
+        cell: ({ row }) => {
+          const { disciplineName, disciplineImageUrl } = row.original;
+          return (
+            <div className="flex items-center gap-2">
+              {disciplineImageUrl ? (
+                <img src={disciplineImageUrl} alt={disciplineName || ''} className="size-7 rounded-full object-cover shrink-0" />
+              ) : (
+                <div className="size-7 rounded-full bg-muted flex items-center justify-center shrink-0">
+                  <Dumbbell className="size-3.5 text-muted-foreground" />
+                </div>
+              )}
+              <span className="text-sm text-muted-foreground">{disciplineName || '—'}</span>
+            </div>
+          );
+        }
       },
       {
         id: 'actions',

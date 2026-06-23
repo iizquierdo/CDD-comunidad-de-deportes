@@ -2,10 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { MaterialIcon } from "../components/MaterialIcon";
 import { useStudents } from "../context/StudentContext";
-import { api, extractErrorMessage } from "../lib/api";
-import type { DisciplineResource, StudentDiscipline } from "../types";
-
-const isActiveDiscipline = (d: StudentDiscipline) => d.status === "ACTIVE";
+import { extractErrorMessage } from "../lib/api";
+import { fetchLibraryResources } from "../lib/data";
+import { isDisplayableImageUrl } from "../lib/media";
+import {
+  collectMultimediaScope,
+  getLibraryResourceLabel,
+  getResourceVisuals
+} from "../lib/multimedia";
+import type { LibraryResource } from "../types";
 
 const getDateValue = (v?: string | null) => {
   if (!v) return 0;
@@ -23,11 +28,6 @@ const formatDate = (v?: string | null) => {
     year: "numeric"
   });
 };
-
-const isImageUrl = (v: string) =>
-  [".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".svg"].some((e) =>
-    v.split("?")[0].toLowerCase().endsWith(e)
-  );
 
 const extractYouTubeId = (v?: string | null) => {
   if (!v) return null;
@@ -48,7 +48,7 @@ const extractYouTubeId = (v?: string | null) => {
   return null;
 };
 
-const getResourcePreview = (resource: DisciplineResource) => {
+const getResourcePreview = (resource: LibraryResource, visuals: ReturnType<typeof getResourceVisuals>) => {
   const youtubeId = extractYouTubeId(resource.resourceUrl);
   if (youtubeId) {
     return {
@@ -58,10 +58,25 @@ const getResourcePreview = (resource: DisciplineResource) => {
         resource.thumbnailUrl ?? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
     };
   }
-  const mediaUrl = resource.thumbnailUrl ?? resource.resourceUrl ?? null;
-  if (!mediaUrl) return { kind: "none" as const, imageUrl: null };
-  if (isImageUrl(mediaUrl)) return { kind: "image" as const, imageUrl: mediaUrl };
-  return { kind: "external" as const, imageUrl: resource.thumbnailUrl ?? null };
+
+  const resourceImage =
+    (resource.thumbnailUrl && isDisplayableImageUrl(resource.thumbnailUrl) ? resource.thumbnailUrl : null) ||
+    (resource.resourceUrl && isDisplayableImageUrl(resource.resourceUrl) ? resource.resourceUrl : null);
+
+  if (resourceImage) {
+    return { kind: "image" as const, imageUrl: resourceImage, coverUrl: null as string | null, logoUrl: null as string | null };
+  }
+
+  if (visuals.coverUrl || visuals.imageUrl) {
+    return {
+      kind: "context" as const,
+      imageUrl: null as string | null,
+      coverUrl: visuals.coverUrl,
+      logoUrl: visuals.imageUrl
+    };
+  }
+
+  return { kind: "none" as const, imageUrl: null, coverUrl: null, logoUrl: null };
 };
 
 export const MultimediaResourcePage = () => {
@@ -70,30 +85,10 @@ export const MultimediaResourcePage = () => {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [resources, setResources] = useState<DisciplineResource[]>([]);
+  const [resources, setResources] = useState<LibraryResource[]>([]);
 
-  const disciplineAssignments = useMemo(
-    () => students.flatMap((s) => s.disciplines ?? []).filter(isActiveDiscipline),
-    [students]
-  );
-
-  const disciplineIds = useMemo(
-    () =>
-      Array.from(
-        new Set(disciplineAssignments.map((a) => a.discipline.id).filter(Boolean))
-      ),
-    [disciplineAssignments]
-  );
-
-  const disciplineIdsKey = useMemo(() => disciplineIds.join("|"), [disciplineIds]);
-
-  const disciplineNameById = useMemo(() => {
-    const map: Record<string, string> = {};
-    disciplineAssignments.forEach((a) => {
-      map[a.discipline.id] = a.discipline.name;
-    });
-    return map;
-  }, [disciplineAssignments]);
+  const scope = useMemo(() => collectMultimediaScope(students), [students]);
+  const { disciplineIds, classIds, scopeKey, disciplineNameById, classNameById } = scope;
 
   useEffect(() => {
     let cancelled = false;
@@ -103,14 +98,7 @@ export const MultimediaResourcePage = () => {
       setError(null);
 
       try {
-        const results = await Promise.allSettled(
-          disciplineIds.map((id) =>
-            api.get<DisciplineResource[]>(`/disciplines/${id}/resources`, {
-              params: { active: true }
-            })
-          )
-        );
-        const next = results.flatMap((r) => (r.status === "fulfilled" ? r.value.data : []));
+        const next = await fetchLibraryResources({ disciplineIds, classIds });
         if (cancelled) return;
         setResources(next);
       } catch (e) {
@@ -124,7 +112,7 @@ export const MultimediaResourcePage = () => {
 
     void load();
     return () => { cancelled = true; };
-  }, [disciplineIdsKey]);
+  }, [scopeKey, disciplineIds, classIds]);
 
   const resource = useMemo(
     () =>
@@ -138,12 +126,15 @@ export const MultimediaResourcePage = () => {
     [resourceId, resources]
   );
 
-  const preview = resource ? getResourcePreview(resource) : null;
+  const visuals = resource ? getResourceVisuals(resource, scope) : null;
+  const preview = resource && visuals ? getResourcePreview(resource, visuals) : null;
   const publishedLabel = formatDate(resource?.publishedAt ?? resource?.createdAt);
+  const contextLabel = resource
+    ? getLibraryResourceLabel(resource, { disciplineNameById, classNameById })
+    : null;
 
   return (
     <div className="px-4 pb-6 pt-5">
-      {/* Back link */}
       <Link
         className="mb-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
         to="/multimedia"
@@ -171,11 +162,10 @@ export const MultimediaResourcePage = () => {
         </div>
       )}
 
-      {!loading && !error && resource && (
+      {!loading && !error && resource && preview && (
         <div className="overflow-hidden rounded-3xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
-          {/* Media */}
           <div className="relative bg-slate-100" style={{ aspectRatio: "16/9" }}>
-            {preview?.kind === "youtube" ? (
+            {preview.kind === "youtube" ? (
               <iframe
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
@@ -184,18 +174,31 @@ export const MultimediaResourcePage = () => {
                 src={preview.embedUrl}
                 title={resource.title}
               />
-            ) : preview?.kind === "image" && preview.imageUrl ? (
+            ) : preview.kind === "image" && preview.imageUrl ? (
               <img
                 alt={resource.title}
                 className="h-full w-full object-cover"
                 src={preview.imageUrl}
               />
-            ) : preview?.imageUrl ? (
-              <img
-                alt={resource.title}
-                className="h-full w-full object-cover"
-                src={preview.imageUrl}
-              />
+            ) : preview.kind === "context" && preview.coverUrl ? (
+              <>
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="h-full w-full object-cover"
+                  src={preview.coverUrl}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+                {preview.logoUrl ? (
+                  <div className="absolute left-5 top-5">
+                    <img
+                      alt={contextLabel ?? resource.title}
+                      className="h-14 w-14 rounded-xl object-cover ring-2 ring-white/30 shadow-lg"
+                      src={preview.logoUrl}
+                    />
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className="flex h-full w-full items-center justify-center">
                 <MaterialIcon name="library_books" className="text-5xl text-slate-300" />
@@ -203,7 +206,6 @@ export const MultimediaResourcePage = () => {
             )}
           </div>
 
-          {/* Content */}
           <div className="p-5">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--primary)]">
               Recurso completo
@@ -212,7 +214,7 @@ export const MultimediaResourcePage = () => {
 
             <div className="mt-2 flex items-center gap-3">
               <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600">
-                {disciplineNameById[resource.disciplineId] ?? "Disciplina"}
+                {contextLabel}
               </span>
               <span className="text-[11px] text-slate-400">{publishedLabel}</span>
             </div>
@@ -230,7 +232,7 @@ export const MultimediaResourcePage = () => {
               </div>
             )}
 
-            {resource.resourceUrl && preview?.kind !== "youtube" && (
+            {resource.resourceUrl && preview.kind !== "youtube" && (
               <div className="mt-5 border-t border-slate-100 pt-4">
                 <h2 className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                   Abrir recurso

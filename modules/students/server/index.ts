@@ -32,6 +32,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
     ALTER TABLE "StudentReport" ADD COLUMN IF NOT EXISTS "ratingTheme" TEXT DEFAULT 'stars';
     ALTER TABLE "Student" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;
     ALTER TABLE "Student" ADD COLUMN IF NOT EXISTS "coverUrl" TEXT;
+    ALTER TABLE "StudentTutor" ADD COLUMN IF NOT EXISTS "status" TEXT DEFAULT 'ACTIVE';
   `).catch(() => { /* table may not exist yet during first install */ });
 
   const requesterId = (req: express.Request): string =>
@@ -107,14 +108,54 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
     );
     const student = r.rows[0];
     if (!student) return null;
-    const [disc, teachers, tutors] = await Promise.all([
+    const hasClassStudent = await tableExists('ClassStudent');
+    const hasClass = await tableExists('Class');
+    const hasDiscipline = await tableExists('Discipline');
+    const hasSchedule = await tableExists('ClassSchedule');
+    const hasClassTeacher = await tableExists('ClassTeacher');
+    const schedulesSubquery = hasSchedule
+      ? `(SELECT json_agg(json_build_object('dayOfWeek', s."dayOfWeek", 'startTime', s."startTime", 'endTime', s."endTime") ORDER BY s."dayOfWeek" ASC, s."startTime" ASC)
+          FROM "ClassSchedule" s WHERE s."classId" = cl.id)`
+      : `'[]'::json`;
+    const classTeachersSubquery = hasClassTeacher
+      ? `(SELECT COALESCE(json_agg(json_build_object('id', u.id, 'name', u.name, 'avatar', COALESCE(u."imageUrl", u.avatar)) ORDER BY u.name ASC), '[]'::json)
+          FROM "ClassTeacher" ct JOIN "User" u ON u.id = ct."teacherId"
+          WHERE ct."classId" = cl.id AND ct.active)`
+      : `'[]'::json`;
+    const [disc, teachers, tutors, classes] = await Promise.all([
       pool.query('SELECT * FROM "StudentDiscipline" WHERE "studentId" = $1', [id]),
-      pool.query('SELECT st.*, u.name AS "teacherName", u.email AS "teacherEmail" FROM "StudentTeacher" st JOIN "User" u ON u.id = st."teacherId" WHERE st."studentId" = $1', [id]),
-      pool.query('SELECT st.*, u.name AS "tutorName", u.email AS "tutorEmail" FROM "StudentTutor" st JOIN "User" u ON u.id = st."tutorId" WHERE st."studentId" = $1', [id])
+      pool.query(
+        `SELECT st.*, u.name AS "teacherName", u.email AS "teacherEmail",
+                COALESCE(u."imageUrl", u.avatar) AS "teacherAvatar"
+         FROM "StudentTeacher" st JOIN "User" u ON u.id = st."teacherId"
+         WHERE st."studentId" = $1 AND st.active = true`,
+        [id]
+      ),
+      pool.query('SELECT st.*, u.name AS "tutorName", u.email AS "tutorEmail" FROM "StudentTutor" st JOIN "User" u ON u.id = st."tutorId" WHERE st."studentId" = $1 ORDER BY st.active DESC, st."assignedAt" ASC', [id]),
+      hasClassStudent && hasClass
+        ? pool.query(
+            `SELECT cs.id, cs."classId", cs."levelId", cs.status,
+                    cl.name, cl.description AS "classDescription",
+                    cl."imageUrl" AS "classImageUrl", cl."coverUrl" AS "classCoverUrl",
+                    cl."disciplineId", cl.status AS "classStatus",
+                    ${hasDiscipline ? 'd.name AS "disciplineName", d."imageUrl" AS "disciplineImageUrl", d."coverUrl" AS "disciplineCoverUrl"' : 'NULL AS "disciplineName", NULL AS "disciplineImageUrl", NULL AS "disciplineCoverUrl"'},
+                    lvl.name AS "levelName", lvl.description AS "levelDescription", lvl."levelOrder" AS "levelOrder",
+                    COALESCE(${schedulesSubquery}, '[]'::json) AS schedules,
+                    COALESCE(${classTeachersSubquery}, '[]'::json) AS teachers
+             FROM "ClassStudent" cs
+             JOIN "Class" cl ON cl.id = cs."classId"
+             ${hasDiscipline ? 'LEFT JOIN "Discipline" d ON d.id = cl."disciplineId"' : ''}
+             LEFT JOIN "ClassLevel" lvl ON lvl.id = cs."levelId"
+             WHERE cs."studentId" = $1 AND cs.status = 'ACTIVE' AND cl.status = 'ACTIVE'
+             ORDER BY cl.name ASC`,
+            [id]
+          )
+        : Promise.resolve({ rows: [] })
     ]);
     student.disciplines = disc.rows;
     student.teachers = teachers.rows;
     student.tutors = tutors.rows;
+    student.classes = classes.rows;
     return student;
   };
 
@@ -199,9 +240,13 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
       // Disciplines (+levels) only if that module is installed.
       let disciplines: any[] = [];
       if (await tableExists('Discipline')) {
-        const d = await pool.query('SELECT id, name FROM "Discipline" WHERE active = true ORDER BY name ASC');
+        const d = await pool.query(
+          'SELECT id, name, "imageUrl", "coverUrl" FROM "Discipline" WHERE active = true ORDER BY name ASC'
+        );
         const levels = (await tableExists('DisciplineLevel'))
-          ? (await pool.query('SELECT id, "disciplineId", name, "levelOrder" FROM "DisciplineLevel" WHERE active = true ORDER BY "levelOrder" ASC')).rows
+          ? (await pool.query(
+              'SELECT id, "disciplineId", name, description, "levelOrder" FROM "DisciplineLevel" WHERE active = true ORDER BY "levelOrder" ASC'
+            )).rows
           : [];
         disciplines = d.rows.map((disc: any) => ({ ...disc, levels: levels.filter((l: any) => l.disciplineId === disc.id) }));
       }
@@ -576,6 +621,35 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
     }
   });
 
+  // ---- Student attendance (weekly summary for tutors) -----------------------
+  router.get('/:id/attendance', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      const studentId = req.params.id;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      if (!(await tableExists('ClassAttendance'))) return res.json([]);
+
+      const from = String(req.query.from || '').trim();
+      const to = String(req.query.to || '').trim();
+      const params: any[] = [studentId];
+      let dateFilter = '';
+      if (from) { params.push(from); dateFilter += ` AND a."date" >= $${params.length}`; }
+      if (to) { params.push(to); dateFilter += ` AND a."date" <= $${params.length}`; }
+
+      const result = await pool.query(
+        `SELECT a."classId", to_char(a."date", 'YYYY-MM-DD') AS "date", a."present"
+         FROM "ClassAttendance" a
+         WHERE a."studentId" = $1${dateFilter}
+         ORDER BY a."date" ASC`,
+        params
+      );
+      res.json(result.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch attendance', details: error.message });
+    }
+  });
+
   // ---- Student disciplines (ABM from the student record) --------------------
   router.post('/:id/disciplines', async (req, res) => {
     try {
@@ -692,6 +766,80 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
       res.json(await loadStudent(studentId));
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to upload image', details: error.message });
+    }
+  });
+
+  // ---- Lookup by DNI (literal path — must be before /:id) ------------------
+  router.get('/lookup', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.userId) return res.status(401).json({ error: 'Auth required.' });
+
+      const dni = String(req.query.dni || '').trim();
+      if (!dni) return res.status(400).json({ error: 'dni query param is required.' });
+
+      const hasDisciplineTable = await tableExists('Discipline');
+      const disciplinesSubquery = hasDisciplineTable
+        ? `COALESCE((SELECT json_agg(d.name ORDER BY d.name) FROM "StudentDiscipline" sd JOIN "Discipline" d ON d.id = sd."disciplineId" WHERE sd."studentId" = s.id AND sd.status = 'ACTIVE'), '[]'::json)`
+        : `'[]'::json`;
+
+      const result = await pool.query(
+        `SELECT s.id, s.code, s."firstName", s."lastName", s.document, s.status, s."companyId", s."imageUrl",
+                c.name AS "companyName",
+                ${disciplinesSubquery} AS "disciplineNames"
+         FROM "Student" s JOIN "Company" c ON c.id = s."companyId"
+         WHERE LOWER(COALESCE(s.document,'')) = LOWER($1)
+         LIMIT 1`,
+        [dni]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: 'No se encontró un alumno con ese DNI.' });
+      res.json(result.rows[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to lookup student', details: error.message });
+    }
+  });
+
+  // ---- Self-link tutor to student -------------------------------------------
+  router.post('/:id/link-tutor', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.userId) return res.status(401).json({ error: 'Auth required.' });
+
+      const studentId = req.params.id;
+      const student = await pool.query('SELECT id FROM "Student" WHERE id = $1 LIMIT 1', [studentId]);
+      if (!student.rows[0]) return res.status(404).json({ error: 'Student not found.' });
+
+      // Insert as PENDING (inactive) so staff must approve before the parent sees the student
+      await pool.query(
+        `INSERT INTO "StudentTutor" (id, "studentId", "tutorId", active, "status", "assignedAt")
+         VALUES ($1, $2, $3, false, 'PENDING', NOW())
+         ON CONFLICT ("studentId", "tutorId") DO NOTHING`,
+        [crypto.randomUUID(), studentId, scope.userId]
+      );
+      res.status(201).json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to link tutor to student', details: error.message });
+    }
+  });
+
+  // ---- Approve pending tutor request ----------------------------------------
+  router.post('/:id/tutors/:tutorId/approve', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Students module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can approve parent requests.' });
+      const { id: studentId, tutorId } = req.params;
+      if (!(await canAccessStudent(scope, studentId))) return res.status(403).json({ error: 'Student out of scope.' });
+      const r = await pool.query(
+        `UPDATE "StudentTutor" SET active = true, "status" = 'ACTIVE' WHERE "studentId" = $1 AND "tutorId" = $2`,
+        [studentId, tutorId]
+      );
+      if (!r.rowCount) return res.status(404).json({ error: 'Tutor link not found.' });
+      res.json(await loadStudent(studentId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to approve tutor request', details: error.message });
     }
   });
 

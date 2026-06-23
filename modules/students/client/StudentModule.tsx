@@ -151,7 +151,7 @@ interface StudentRow {
 }
 
 interface Enrollment { id: string; disciplineId: string; levelId?: string | null; status: string }
-interface Assignment { id: string; teacherId?: string; tutorId?: string; teacherName?: string; tutorName?: string; tutorEmail?: string }
+interface Assignment { id: string; teacherId?: string; tutorId?: string; teacherName?: string; tutorName?: string; tutorEmail?: string; status?: string; active?: boolean }
 interface ParentItem { id: string; name?: string | null; firstName?: string | null; lastName?: string | null; email: string }
 interface ReportItem { id: string; authorId?: string; type: string; title: string; content?: string | null; summary?: string | null; visibility: string; status: string; authorName?: string; authorAvatarUrl?: string | null; createdAt: string; publishedAt?: string | null; rating?: number | null; ratingTheme?: string | null }
 interface ConversationItem { id: string; subject?: string | null; status: string; createdByName?: string; messageCount?: number; updatedAt: string }
@@ -217,6 +217,7 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
   const [parentPick, setParentPick] = useState('');
   const [parentCreateOpen, setParentCreateOpen] = useState(false);
   const [parentForm, setParentForm] = useState({ ...emptyParentForm });
+  const [approvingTutorId, setApprovingTutorId] = useState<string | null>(null);
 
   const disciplineName = (id: string) => meta.disciplines.find((d) => d.id === id)?.name || id;
   const levelName = (did: string, lid?: string | null) => meta.disciplines.find((d) => d.id === did)?.levels.find((l) => l.id === lid)?.name || '';
@@ -495,6 +496,16 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
     } catch (err: any) { setError(err.message || t('students.errorSave')); }
   };
 
+  const approveTutor = async (x: Assignment) => {
+    if (!selected || !x.tutorId) return;
+    setApprovingTutorId(x.tutorId);
+    try {
+      const res = await fetch(`/api/students/${selected.id}/tutors/${x.tutorId}/approve`, { method: 'POST' });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b?.error || t('students.errorSave')); }
+      setSelected(await res.json());
+    } catch (err: any) { setError(err.message || t('students.errorSave')); } finally { setApprovingTutorId(null); }
+  };
+
   const genderOptions = useMemo(() => (meta.genders.length ? meta.genders.map((x) => x.name) : ['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'UNSPECIFIED']), [meta.genders]);
   const reportTypeOptions = useMemo(() => (meta.reportTypes.length ? meta.reportTypes.map((x) => x.name) : ['PROGRESS', 'OBSERVATION', 'LEVEL_CHANGE', 'RECOMMENDATION']), [meta.reportTypes]);
   const visibilityOptions = useMemo(() => (meta.reportVisibilities.length ? meta.reportVisibilities.map((x) => x.name) : ['INTERNAL_STAFF', 'TUTORS_ONLY']), [meta.reportVisibilities]);
@@ -708,23 +719,71 @@ const StudentModule: React.FC<Props> = ({ view, setView, currentUser, companyId,
           </div>
         )}
 
-        {activeTab === 'Staff' && selected && (
-          <div className="px-1">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('students.parents')}</h3>
-              <button onClick={openAddParent} className={primaryBtn}><i className="fa-solid fa-plus" /> {t('students.addParent')}</button>
-            </div>
-            {(selected.tutors || []).length === 0 ? <Empty text={t('students.none')} /> : (selected.tutors as Assignment[]).map((x) => (
-              <div key={x.id} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        {activeTab === 'Staff' && selected && (() => {
+          const allTutors: Assignment[] = selected.tutors || [];
+          const pendingTutors = allTutors.filter((x) => x.status === 'PENDING' || x.active === false);
+          const activeTutors = allTutors.filter((x) => x.status !== 'PENDING' && x.active !== false);
+          return (
+            <div className="px-1 space-y-5">
+              {/* Pending access requests */}
+              {pendingTutors.length > 0 && (
                 <div>
-                  <p className="text-sm font-semibold text-slate-700">{x.tutorName}</p>
-                  {x.tutorEmail && <p className="text-xs text-slate-400">{x.tutorEmail}</p>}
+                  <div className="mb-3 flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-amber-600">Solicitudes pendientes</h3>
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white">{pendingTutors.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {pendingTutors.map((x) => (
+                      <div key={x.id} className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-200 text-amber-700">
+                            <i className="fa-solid fa-user-clock text-sm" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800 truncate">{x.tutorName || '—'}</p>
+                            {x.tutorEmail && <p className="text-xs text-slate-500 truncate">{x.tutorEmail}</p>}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 gap-1.5">
+                          <button
+                            type="button"
+                            disabled={approvingTutorId === x.tutorId}
+                            onClick={() => approveTutor(x)}
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-opacity hover:bg-emerald-600 disabled:opacity-60"
+                          >
+                            {approvingTutorId === x.tutorId
+                              ? <><i className="fa-solid fa-spinner fa-spin" /> Aprobando...</>
+                              : <><i className="fa-solid fa-check" /> Aprobar</>}
+                          </button>
+                          <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 shrink-0 text-destructive hover:bg-destructive/10" onClick={() => removeParent(x)} aria-label="Rechazar">
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 shrink-0 text-destructive hover:bg-destructive/10" onClick={() => removeParent(x)} aria-label={t('students.cancel')}><Trash2 className="size-3.5" /></Button>
+              )}
+
+              {/* Active parents */}
+              <div>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">{t('students.parents')}</h3>
+                  <button onClick={openAddParent} className={primaryBtn}><i className="fa-solid fa-plus" /> {t('students.addParent')}</button>
+                </div>
+                {activeTutors.length === 0 ? <Empty text={t('students.none')} /> : activeTutors.map((x) => (
+                  <div key={x.id} className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-700">{x.tutorName}</p>
+                      {x.tutorEmail && <p className="text-xs text-slate-400">{x.tutorEmail}</p>}
+                    </div>
+                    <Button type="button" mode="icon" size="sm" variant="outline" className="size-8 shrink-0 text-destructive hover:bg-destructive/10" onClick={() => removeParent(x)} aria-label={t('students.cancel')}><Trash2 className="size-3.5" /></Button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {activeTab === 'Reports' && (
           <div className="px-1">

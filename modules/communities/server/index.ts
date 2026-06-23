@@ -5,6 +5,8 @@ import multer from 'multer';
 import type { Pool } from 'pg';
 import {
   fetchMergedItemsByCategoryCodes,
+  grantModulePermission,
+  NATACION_ROLES,
   resolveTenantAuthContext,
   resolveRequesterScope,
   getRequesterUserId,
@@ -24,6 +26,15 @@ const MODULE_CODE = 'COMMUNITIES';
 export default function registerCommunitiesModule({ app, pool }: CommunitiesModuleContext) {
   const router = express.Router();
 
+  void grantModulePermission(pool, {
+    roleName: NATACION_ROLES.TUTOR,
+    moduleCode: MODULE_CODE,
+    canRead: true,
+    canCreate: true,
+    canWrite: true,
+    canDelete: true
+  }).catch(() => { /* module/role may not exist yet during first install */ });
+
   const requesterId = (req: express.Request): string => String((req as any).authUserId || getRequesterUserId(req) || '').trim();
   const scopeOf = (req: express.Request) => resolveRequesterScope(pool, requesterId(req));
 
@@ -42,11 +53,24 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
     return `cm.id IN (SELECT "communityId" FROM "CommunityProfessor" WHERE "userId" = $${params.length} AND active = true)`;
   };
 
+  /** Tutors see communities where any of their linked students is an active member. */
+  const tutorStudentCommunityClause = (userId: string, params: any[]): string => {
+    params.push(userId);
+    return `EXISTS (
+      SELECT 1 FROM "CommunityMember" mbr
+      JOIN "StudentTutor" st ON st."studentId" = mbr."studentId" AND st."tutorId" = $${params.length} AND st.active = true
+      WHERE mbr."communityId" = cm.id AND mbr.active = true
+    )`;
+  };
+
   /** Community visibility: admins by company scope; professors/tutors only when invited. */
   const scopedCommunityClause = (scope: RequesterScope | null, params: any[]): string => {
     if (!scope) return 'false';
     if (scope.isSuperAdmin) return 'true';
-    if ((scope.isProfesor || scope.isTutor) && !scope.isStaff && scope.userId) {
+    if (scope.isTutor && !scope.isStaff && scope.userId) {
+      return `(${professorMembershipClause(scope.userId, params)} OR ${tutorStudentCommunityClause(scope.userId, params)})`;
+    }
+    if (scope.isProfesor && !scope.isStaff && scope.userId) {
       return professorMembershipClause(scope.userId, params);
     }
     const conditions: string[] = [];
@@ -66,7 +90,26 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
       const r = await pool.query('SELECT 1 FROM "Community" WHERE id = $1 LIMIT 1', [communityId]);
       return Boolean(r.rows[0]);
     }
-    if ((scope.isProfesor || scope.isTutor) && !scope.isStaff && scope.userId) {
+    if (scope.isTutor && !scope.isStaff && scope.userId) {
+      if (await tableExists('CommunityProfessor')) {
+        const invited = await pool.query(
+          'SELECT 1 FROM "CommunityProfessor" WHERE "communityId" = $1 AND "userId" = $2 AND active = true LIMIT 1',
+          [communityId, scope.userId]
+        );
+        if (invited.rows[0]) return true;
+      }
+      if (await tableExists('CommunityMember') && await tableExists('StudentTutor')) {
+        const viaStudent = await pool.query(
+          `SELECT 1 FROM "CommunityMember" mbr
+           JOIN "StudentTutor" st ON st."studentId" = mbr."studentId" AND st."tutorId" = $2 AND st.active = true
+           WHERE mbr."communityId" = $1 AND mbr.active = true LIMIT 1`,
+          [communityId, scope.userId]
+        );
+        if (viaStudent.rows[0]) return true;
+      }
+      return false;
+    }
+    if (scope.isProfesor && !scope.isStaff && scope.userId) {
       if (!(await tableExists('CommunityProfessor'))) return false;
       const r = await pool.query(
         'SELECT 1 FROM "CommunityProfessor" WHERE "communityId" = $1 AND "userId" = $2 AND active = true LIMIT 1',
@@ -157,6 +200,13 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
       if (search) { params.push(`%${search}%`); where.push(`LOWER(cm.name) LIKE LOWER($${params.length})`); }
       if (companyId && scope?.isSuperAdmin) { params.push(companyId); where.push(`cm."companyId" = $${params.length}`); }
       if (studentId) {
+        if (scope?.isTutor && !scope.isStaff && scope.userId) {
+          const linked = await pool.query(
+            'SELECT 1 FROM "StudentTutor" WHERE "studentId" = $1 AND "tutorId" = $2 AND active = true LIMIT 1',
+            [studentId, scope.userId]
+          );
+          if (!linked.rows[0]) return res.status(403).json({ error: 'Student out of scope.' });
+        }
         params.push(studentId);
         where.push(`EXISTS (SELECT 1 FROM "CommunityMember" mbr WHERE mbr."communityId" = cm.id AND mbr."studentId" = $${params.length} AND mbr.active = true)`);
       }
@@ -485,6 +535,9 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
     try {
       if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
       const scope = await scopeOf(req);
+      if (scope?.isTutor && !scope.isStaff && !scope.isProfesor) {
+        return res.status(403).json({ error: 'Tutors cannot create community posts.' });
+      }
       if (!(await canAccess(scope, req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
       const title = String(req.body?.title || '').trim();
       if (!title) return res.status(400).json({ error: 'title is required.' });
@@ -648,16 +701,61 @@ export default function registerCommunitiesModule({ app, pool }: CommunitiesModu
   router.delete('/:id/posts/:postId/comments/:commentId', async (req, res) => {
     try {
       if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
-      if (!(await canAccess(await scopeOf(req), req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      const scope = await scopeOf(req);
+      if (!(await canAccess(scope, req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
       await ensureCommentsTable();
-      const r = await pool.query(
-        `DELETE FROM "CommunityPostComment" WHERE id = $1 AND "postId" = $2`,
+      const userId = requesterId(req);
+      const existing = await pool.query(
+        `SELECT id, "authorId" FROM "CommunityPostComment" WHERE id = $1 AND "postId" = $2 LIMIT 1`,
         [req.params.commentId, req.params.postId]
       );
-      if (!r.rowCount) return res.status(404).json({ error: 'Comment not found.' });
+      const comment = existing.rows[0];
+      if (!comment) return res.status(404).json({ error: 'Comment not found.' });
+      if (!scope?.isStaff && String(comment.authorId) !== userId) {
+        return res.status(403).json({ error: 'Only the author can delete this comment.' });
+      }
+      await pool.query(`DELETE FROM "CommunityPostComment" WHERE id = $1`, [req.params.commentId]);
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to delete comment', details: error.message });
+    }
+  });
+
+  router.put('/:id/posts/:postId/comments/:commentId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Communities module is not active.' });
+      const scope = await scopeOf(req);
+      if (!(await canAccess(scope, req.params.id))) return res.status(403).json({ error: 'Community out of scope.' });
+      const content = String(req.body?.content || '').trim();
+      if (!content) return res.status(400).json({ error: 'content is required.' });
+      await ensureCommentsTable();
+      const userId = requesterId(req);
+      const existing = await pool.query(
+        `SELECT id, "authorId" FROM "CommunityPostComment" WHERE id = $1 AND "postId" = $2 LIMIT 1`,
+        [req.params.commentId, req.params.postId]
+      );
+      const comment = existing.rows[0];
+      if (!comment) return res.status(404).json({ error: 'Comment not found.' });
+      if (!scope?.isStaff && String(comment.authorId) !== userId) {
+        return res.status(403).json({ error: 'Only the author can edit this comment.' });
+      }
+      await pool.query(
+        `UPDATE "CommunityPostComment" SET content = $1, "updatedAt" = NOW() WHERE id = $2`,
+        [content, req.params.commentId]
+      );
+      const updated = await pool.query(
+        `SELECT c.id, c."postId", c.content, c."createdAt",
+                u.id AS "authorId", u.name AS "authorName",
+                u."firstName", u."lastName",
+                COALESCE(NULLIF(TRIM(u."imageUrl"), ''), NULLIF(TRIM(u.avatar), '')) AS "avatarUrl"
+         FROM "CommunityPostComment" c
+         JOIN "User" u ON u.id = c."authorId"
+         WHERE c.id = $1`,
+        [req.params.commentId]
+      );
+      res.json(updated.rows[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to update comment', details: error.message });
     }
   });
 

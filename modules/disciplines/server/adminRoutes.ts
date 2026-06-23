@@ -13,6 +13,7 @@ export const registerModuleAdminRoutes = async (
       const result = await pool.query(`
         SELECT r.*,
                d.name AS "disciplineName",
+               d."imageUrl" AS "disciplineImageUrl",
                u.name AS "createdByName"
         FROM "DisciplineResource" r
         JOIN "Discipline" d ON d.id = r."disciplineId"

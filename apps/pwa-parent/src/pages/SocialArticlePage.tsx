@@ -69,12 +69,7 @@ export const SocialArticlePage = () => {
       setError(null);
 
       try {
-        const full = await fetchCommunities();
-        const scoped = selectedStudentId
-          ? full.filter((c) =>
-              c.members.some((m) => m.active && m.student.id === selectedStudentId)
-            )
-          : full;
+        const scoped = await fetchCommunities(selectedStudentId);
         if (cancelled) return;
         setCommunities(scoped);
       } catch (e) {

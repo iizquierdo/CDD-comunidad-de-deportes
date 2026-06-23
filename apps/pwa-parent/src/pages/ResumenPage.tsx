@@ -1,9 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { DisciplineAvatar } from "../components/DisciplineAvatar";
 import { MaterialIcon } from "../components/MaterialIcon";
+import { StudentAvatar } from "../components/StudentAvatar";
 import { useAuth } from "../context/AuthContext";
 import { useStudents } from "../context/StudentContext";
-import type { StudentDiscipline, StudentSummary } from "../types";
+import { searchStudentByDni, linkStudentToTutor, fetchStudentWeeklyAttendance } from "../lib/data";
+import { extractErrorMessage } from "../lib/api";
+import type { ClassScheduleSlot, StudentDiscipline, StudentSummary } from "../types";
 
 const demoRoster: StudentSummary[] = [
   {
@@ -80,8 +84,39 @@ const getSchedule = (name: string, index: number) => {
   return index % 2 === 0 ? "Mar. · 17:00" : "Vie. · 16:30";
 };
 
-const getInitials = (student: StudentSummary) =>
-  `${student.firstName.charAt(0)}${student.lastName.charAt(0)}`.toUpperCase();
+const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+const formatTime = (time: string) => time.slice(0, 5);
+
+const formatClassSchedule = (schedules?: ClassScheduleSlot[]) => {
+  if (!schedules?.length) return "";
+  const byTime = new Map<string, number[]>();
+  for (const slot of schedules) {
+    if (!slot.startTime) continue;
+    const time = formatTime(slot.startTime);
+    const days = byTime.get(time) ?? [];
+    days.push(slot.dayOfWeek);
+    byTime.set(time, days);
+  }
+  return [...byTime.entries()]
+    .map(([time, days]) => {
+      const dayLabels = [...new Set(days)]
+        .sort((a, b) => a - b)
+        .map((d) => `${DAY_SHORT[d] ?? d}.`);
+      const dayPart = dayLabels.length > 1 ? dayLabels.join(" y ") : dayLabels[0];
+      return `${dayPart} · ${time}`;
+    })
+    .join(" · ");
+};
+
+type ActivityItem = {
+  id: string;
+  name: string;
+  imageUrl?: string | null;
+  scheduleLabel: string;
+  levelName?: string | null;
+  iconName: string;
+};
 
 const isActiveDiscipline = (d: StudentDiscipline) => d.status === "ACTIVE";
 
@@ -99,10 +134,70 @@ const todayLabel = () => {
   }
 };
 
+type SearchStatus = "idle" | "loading" | "found" | "error";
+type LinkStatus = "idle" | "loading" | "done" | "error";
+
 export const ResumenPage = () => {
   const { user } = useAuth();
-  const { students, selectedStudent, selectedStudentId, setSelectedStudentId, loading, error } =
+  const { students, selectedStudent, selectedStudentId, setSelectedStudentId, loading, error, refreshStudents } =
     useStudents();
+
+  const [showModal, setShowModal] = useState(false);
+  const [dni, setDni] = useState("");
+  const [searchStatus, setSearchStatus] = useState<SearchStatus>("idle");
+  const [foundStudent, setFoundStudent] = useState<StudentSummary | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [linkStatus, setLinkStatus] = useState<LinkStatus>("idle");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [attendance, setAttendance] = useState<{ rate: number | null; present: number; total: number } | null>(
+    null
+  );
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const dniInputRef = useRef<HTMLInputElement>(null);
+
+  const openModal = () => {
+    setDni("");
+    setSearchStatus("idle");
+    setFoundStudent(null);
+    setSearchError(null);
+    setLinkStatus("idle");
+    setLinkError(null);
+    setShowModal(true);
+    setTimeout(() => dniInputRef.current?.focus(), 50);
+  };
+
+  const closeModal = () => setShowModal(false);
+
+  const handleSearch = async () => {
+    const trimmed = dni.trim();
+    if (!trimmed) return;
+    setSearchStatus("loading");
+    setFoundStudent(null);
+    setSearchError(null);
+    try {
+      const student = await searchStudentByDni(trimmed);
+      setFoundStudent(student);
+      setSearchStatus("found");
+    } catch (err) {
+      setSearchError(extractErrorMessage(err));
+      setSearchStatus("error");
+    }
+  };
+
+  const handleLink = async () => {
+    if (!foundStudent) return;
+    setLinkStatus("loading");
+    setLinkError(null);
+    try {
+      await linkStudentToTutor(foundStudent.id);
+      await refreshStudents();
+      setLinkStatus("done");
+      setTimeout(() => closeModal(), 1200);
+    } catch (err) {
+      setLinkError(extractErrorMessage(err));
+      setLinkStatus("error");
+    }
+  };
 
   const hasRealData = students.length > 0;
   const roster = hasRealData ? students : demoRoster;
@@ -113,12 +208,62 @@ export const ResumenPage = () => {
     [activeStudent]
   );
 
+  const activeClasses = useMemo(
+    () => (activeStudent?.classes ?? []).filter((c) => c.status === "ACTIVE"),
+    [activeStudent]
+  );
+
+  const activityItems = useMemo((): ActivityItem[] => {
+    if (activeClasses.length > 0) {
+      return activeClasses.map((item) => ({
+        id: item.id,
+        name: item.name,
+        imageUrl: item.imageUrl,
+        scheduleLabel: formatClassSchedule(item.schedules) || "Horario a confirmar",
+        levelName: item.levelName,
+        iconName: getDisciplineIcon(item.disciplineName || item.name)
+      }));
+    }
+    return activeDisciplines.map((item, index) => ({
+      id: item.id,
+      name: item.discipline.name,
+      imageUrl: item.discipline.imageUrl,
+      scheduleLabel: getSchedule(item.discipline.name, index),
+      levelName: item.level?.name,
+      iconName: getDisciplineIcon(item.discipline.name)
+    }));
+  }, [activeClasses, activeDisciplines]);
+
+  const showingClasses = activeClasses.length > 0;
   const primaryDiscipline = activeDisciplines[0] ?? null;
-  const attendance = activeDisciplines.length === 0 ? 0 : Math.min(96, 80 + activeDisciplines.length * 4);
-  const classesAttended = Math.round((attendance / 100) * 5);
-  const streakWeeks = activeDisciplines.length === 0 ? 0 : 4 + activeDisciplines.length;
+  const activityCount = activityItems.length;
+  const attendanceRate = attendance?.rate ?? null;
+  const classesAttended = attendance?.present ?? 0;
+  const classesTotal = attendance?.total ?? 0;
+  const streakWeeks = 0;
   const levelOrder = primaryDiscipline?.level?.levelOrder ?? null;
   const tutorName = user?.firstName?.trim() || "tutor";
+
+  useEffect(() => {
+    if (!hasRealData || !activeStudent?.id || activityCount === 0) {
+      setAttendance(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAttendanceLoading(true);
+    void fetchStudentWeeklyAttendance(activeStudent.id)
+      .then((result) => {
+        if (!cancelled) setAttendance(result);
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasRealData, activeStudent?.id, activityCount]);
 
   if (loading && !activeStudent) {
     return (
@@ -163,7 +308,7 @@ export const ResumenPage = () => {
         <p className="text-xs font-medium uppercase tracking-widest text-slate-400">{todayLabel()}</p>
         <h1 className="mt-1 text-2xl font-bold text-slate-900">¡Hola, {tutorName}! 👋</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Seguí de cerca el entrenamiento y los logros de tu familia.
+          Seguí el entrenamiento y los logros de tu familia.
         </p>
       </header>
 
@@ -192,21 +337,19 @@ export const ResumenPage = () => {
                   onClick={() => hasRealData && setSelectedStudentId(student.id)}
                   type="button"
                 >
-                  <span
-                    className={`flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold ${
-                      isActive
-                        ? "bg-[var(--primary)] text-white"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {getInitials(student)}
-                  </span>
+                  <StudentAvatar
+                    className={isActive && student.imageUrl ? "ring-2 ring-[var(--primary)] ring-offset-2" : ""}
+                    size="h-12 w-12"
+                    student={student}
+                    variant={isActive ? "active" : "default"}
+                  />
                   <span className="text-xs font-medium text-slate-700">{student.firstName}</span>
                 </button>
               );
             })}
             <button
               className="flex flex-col items-center gap-1"
+              onClick={openModal}
               type="button"
             >
               <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
@@ -226,9 +369,12 @@ export const ResumenPage = () => {
               Ficha del atleta
             </p>
             <div className="mt-3 flex items-center gap-3">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-lg font-bold">
-                {getInitials(activeStudent)}
-              </div>
+              <StudentAvatar
+                shape="rounded"
+                size="h-14 w-14"
+                student={activeStudent}
+                variant="hero"
+              />
               <div>
                 <h2 className="text-xl font-bold leading-tight">
                   {activeStudent.firstName} {activeStudent.lastName}
@@ -241,7 +387,7 @@ export const ResumenPage = () => {
             </div>
             <div className="mt-4 flex gap-4 border-t border-white/20 pt-4">
               {[
-                { value: activeDisciplines.length, label: "Disciplinas" },
+                { value: activityCount, label: showingClasses ? "Clases" : "Disciplinas" },
                 { value: streakWeeks, label: "Sem. activo" },
                 { value: levelOrder ?? "—", label: "Nivel" }
               ].map((kpi) => (
@@ -255,20 +401,24 @@ export const ResumenPage = () => {
         </div>
 
         {/* Attendance */}
-        {activeDisciplines.length > 0 && (
+        {activityCount > 0 && (
           <div className="rounded-3xl bg-blue-50 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-500">
               Asistencia
             </p>
-            <strong className="mt-2 block text-3xl font-bold text-slate-900">{attendance}%</strong>
+            <strong className="mt-2 block text-3xl font-bold text-slate-900">
+              {attendanceLoading ? "—" : attendanceRate !== null ? `${attendanceRate}%` : "0%"}
+            </strong>
             <p className="mt-1 text-xs text-slate-500">
-              {classesAttended} de 5 clases
+              {classesTotal > 0
+                ? `${classesAttended} de ${classesTotal} clases`
+                : "Sin registros esta semana"}
             </p>
           </div>
         )}
 
         {/* Streak */}
-        {activeDisciplines.length > 0 && (
+        {activityCount > 0 && (
           <div className="rounded-3xl bg-amber-50 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-500">
               Racha
@@ -282,55 +432,45 @@ export const ResumenPage = () => {
         <div className="col-span-2 rounded-3xl bg-white p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Disciplinas activas
+              {showingClasses ? "Clases activas" : "Disciplinas activas"}
             </h2>
-            {activeDisciplines.length > 0 && (
+            {activityCount > 0 && (
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500">
-                {activeDisciplines.length}
+                {activityCount}
               </span>
             )}
           </div>
 
-          {activeDisciplines.length > 0 ? (
+          {activityCount > 0 ? (
             <div className="space-y-2">
-              {activeDisciplines.map((item, index) => (
+              {activityItems.map((item) => (
                 <Link
                   key={item.id}
                   className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3 transition-colors hover:bg-slate-100"
                   to="/niveles"
                 >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary-softer)] text-[var(--primary)]">
-                    <MaterialIcon name={getDisciplineIcon(item.discipline.name)} filled />
-                  </span>
+                  <DisciplineAvatar
+                    iconName={item.iconName}
+                    imageUrl={item.imageUrl}
+                    name={item.name}
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-slate-900">
-                      {item.discipline.name}
+                      {item.name}
                     </p>
                     <p className="flex items-center gap-1 text-xs text-slate-500">
                       <MaterialIcon name="schedule" className="text-xs" />
-                      {getSchedule(item.discipline.name, index)}
+                      {item.scheduleLabel}
                     </p>
                   </div>
-                  {item.level?.name && (
+                  {item.levelName && (
                     <span className="shrink-0 rounded-full bg-[var(--primary-softer)] px-2.5 py-1 text-[11px] font-semibold text-[var(--primary)]">
-                      {item.level.name}
+                      {item.levelName}
                     </span>
                   )}
                 </Link>
               ))}
 
-              <Link
-                className="flex items-center gap-3 rounded-2xl border border-dashed border-slate-200 p-3 transition-colors hover:bg-slate-50"
-                to="/niveles"
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
-                  <MaterialIcon name="add" className="text-base" />
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-500">Sumar disciplina</p>
-                  <p className="text-xs text-slate-400">Explorá las actividades disponibles</p>
-                </div>
-              </Link>
             </div>
           ) : (
             <div className="py-6 text-center">
@@ -354,6 +494,119 @@ export const ResumenPage = () => {
         </div>
 
       </div>
+      {/* Add athlete modal */}
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4 pb-8 pt-16 backdrop-blur-sm sm:items-center sm:pb-0"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+            {/* Header */}
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900">Añadir atleta</h3>
+              <button
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100"
+                onClick={closeModal}
+                type="button"
+              >
+                <MaterialIcon name="close" className="text-base" />
+              </button>
+            </div>
+
+            {/* DNI input */}
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Número de DNI
+            </label>
+            <div className="mt-1.5 flex gap-2">
+              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 focus-within:border-[var(--primary)] focus-within:bg-white transition-colors">
+                <MaterialIcon name="badge" className="text-base text-slate-400" />
+                <input
+                  ref={dniInputRef}
+                  className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                  disabled={searchStatus === "loading"}
+                  inputMode="numeric"
+                  onChange={(e) => {
+                    setDni(e.target.value);
+                    if (searchStatus !== "idle") {
+                      setSearchStatus("idle");
+                      setFoundStudent(null);
+                      setSearchError(null);
+                    }
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }}
+                  placeholder="Ej. 38123456"
+                  type="text"
+                  value={dni}
+                />
+              </div>
+              <button
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--primary)] text-white shadow-sm transition-opacity disabled:opacity-40"
+                disabled={!dni.trim() || searchStatus === "loading"}
+                onClick={() => void handleSearch()}
+                type="button"
+              >
+                {searchStatus === "loading"
+                  ? <MaterialIcon name="progress_activity" className="text-base animate-spin" />
+                  : <MaterialIcon name="search" className="text-base" />
+                }
+              </button>
+            </div>
+
+            {/* Result */}
+            {searchStatus === "found" && foundStudent && (
+              <div className="mt-5">
+                <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Alumno encontrado
+                </p>
+                <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+                  <StudentAvatar
+                    size="h-12 w-12"
+                    student={foundStudent}
+                    variant="found"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-900">
+                      {foundStudent.firstName} {foundStudent.lastName}
+                    </p>
+                    {foundStudent.sede?.name && (
+                      <p className="truncate text-xs text-slate-500">{foundStudent.sede.name}</p>
+                    )}
+                  </div>
+                  <MaterialIcon name="check_circle" filled className="ml-auto shrink-0 text-[var(--primary)]" />
+                </div>
+
+                {linkError && (
+                  <p className="mt-2 text-xs text-red-500">{linkError}</p>
+                )}
+
+                <button
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-[var(--primary)] py-3.5 text-sm font-semibold text-white shadow-lg transition-opacity disabled:opacity-50"
+                  disabled={linkStatus === "loading" || linkStatus === "done"}
+                  onClick={() => void handleLink()}
+                  type="button"
+                >
+                  {linkStatus === "loading" && <MaterialIcon name="progress_activity" className="text-base animate-spin" />}
+                  {linkStatus === "done" && <MaterialIcon name="check" className="text-base" />}
+                  {linkStatus === "idle" || linkStatus === "error" ? "Confirmar y añadir" : linkStatus === "loading" ? "Añadiendo…" : "¡Añadido!"}
+                </button>
+              </div>
+            )}
+
+            {searchStatus === "error" && (
+              <div className="mt-4 flex items-start gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+                <MaterialIcon name="person_search" className="mt-0.5 shrink-0 text-base" />
+                <span>{searchError ?? "No se encontró un alumno con ese DNI."}</span>
+              </div>
+            )}
+
+            {searchStatus === "idle" && (
+              <p className="mt-4 text-center text-xs text-slate-400">
+                Ingresá el DNI del alumno para buscarlo en el sistema.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

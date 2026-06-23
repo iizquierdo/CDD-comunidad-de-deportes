@@ -23,7 +23,16 @@ interface ClassesModuleContext {
 }
 
 const MODULE_CODE = 'CLASSES';
-const META_CODES = ['CLASS_STATUS'];
+const META_CODES = ['CLASS_STATUS', 'DISCIPLINE_RESOURCE_TYPE', 'DISCIPLINE_RESOURCE_VISIBILITY'];
+
+/** Resource visibility levels a requester may see (mirrors discipline resources). */
+const allowedVisibilities = (scope: RequesterScope | null): string[] => {
+  if (!scope) return ['PUBLIC'];
+  if (scope.isSuperAdmin || scope.isAdminSede) return ['ADMIN_ONLY', 'STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
+  if (scope.isProfesor) return ['STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
+  if (scope.isTutor) return ['MEMBERS_ONLY', 'PUBLIC'];
+  return ['PUBLIC'];
+};
 
 export default function registerClassesModule({ app, pool }: ClassesModuleContext) {
   const router = express.Router();
@@ -68,6 +77,34 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
     communityClassIdEnsured = true;
   };
 
+  let classResourceTableEnsured = false;
+  const ensureClassResourceTable = async () => {
+    if (classResourceTableEnsured) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "ClassResource" (
+        "id" TEXT NOT NULL,
+        "classId" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "description" TEXT,
+        "type" TEXT NOT NULL DEFAULT 'GENERAL_FILE',
+        "resourceUrl" TEXT,
+        "storageKey" TEXT,
+        "thumbnailUrl" TEXT,
+        "visibility" TEXT NOT NULL DEFAULT 'STAFF_ONLY',
+        "publishedAt" TIMESTAMP(3),
+        "active" BOOLEAN NOT NULL DEFAULT true,
+        "createdById" TEXT NOT NULL,
+        "updatedById" TEXT NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL,
+        CONSTRAINT "ClassResource_pkey" PRIMARY KEY ("id")
+      );
+      CREATE INDEX IF NOT EXISTS "ClassResource_classId_idx" ON "ClassResource"("classId", "active");
+      CREATE INDEX IF NOT EXISTS "ClassResource_visibility_idx" ON "ClassResource"("visibility");
+    `);
+    classResourceTableEnsured = true;
+  };
+
   /** SQL WHERE fragment (+params) limiting classes (alias cl) to those the requester may see. */
   const scopedClassClause = (scope: RequesterScope | null, params: any[]): string => {
     if (!scope) return 'false';
@@ -77,9 +114,21 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       params.push(scope.companyScope);
       return `cl."companyId" = ANY($${params.length})`;
     }
-    if (scope.isProfesor || scope.isTutor) {
+    if (scope.isProfesor) {
       params.push(scope.userId);
       return `EXISTS (SELECT 1 FROM "ClassTeacher" ct WHERE ct."classId" = cl.id AND ct."teacherId" = $${params.length} AND ct.active)`;
+    }
+    if (scope.isTutor) {
+      params.push(scope.userId);
+      const tutorParam = `$${params.length}`;
+      return `(
+        EXISTS (SELECT 1 FROM "ClassTeacher" ct WHERE ct."classId" = cl.id AND ct."teacherId" = ${tutorParam} AND ct.active)
+        OR EXISTS (
+          SELECT 1 FROM "ClassStudent" cs
+          JOIN "StudentTutor" st ON st."studentId" = cs."studentId" AND st."tutorId" = ${tutorParam} AND st.active
+          WHERE cs."classId" = cl.id AND cs.status = 'ACTIVE'
+        )
+      )`;
     }
     // Fallback: any authenticated non-admin user sees classes they're explicitly assigned to as teacher.
     params.push(scope.userId);
@@ -275,7 +324,11 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       }
 
       res.json({
-        categories: { statuses: catMap.get('CLASS_STATUS') || [] },
+        categories: {
+          statuses: catMap.get('CLASS_STATUS') || [],
+          resourceTypes: catMap.get('DISCIPLINE_RESOURCE_TYPE') || [],
+          visibilities: catMap.get('DISCIPLINE_RESOURCE_VISIBILITY') || []
+        },
         staff: staff.rows,
         disciplines
       });
@@ -790,6 +843,162 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: 'Failed to remove student', details: error.message });
+    }
+  });
+
+  // ---- Class resources ------------------------------------------------------
+  const insertClassResource = async (classId: string, body: any, userId: string, storageKey?: string | null, resourceUrl?: string | null) => {
+    await ensureClassResourceTable();
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO "ClassResource"
+        (id, "classId", title, description, type, "resourceUrl", "storageKey", "thumbnailUrl", visibility, "publishedAt", active, "createdById", "updatedById", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, NOW(), NOW())`,
+      [
+        id,
+        classId,
+        String(body?.title || '').trim() || 'Recurso',
+        String(body?.description || '').trim() || null,
+        String(body?.type || 'GENERAL_FILE').trim() || 'GENERAL_FILE',
+        resourceUrl ?? (String(body?.resourceUrl || '').trim() || null),
+        storageKey ?? (String(body?.storageKey || '').trim() || null),
+        String(body?.thumbnailUrl || '').trim() || null,
+        String(body?.visibility || 'STAFF_ONLY').trim() || 'STAFF_ONLY',
+        body?.publishedAt ? new Date(body.publishedAt) : null,
+        body?.active === false ? false : true,
+        userId
+      ]
+    );
+    const created = await pool.query('SELECT * FROM "ClassResource" WHERE id = $1', [id]);
+    return created.rows[0];
+  };
+
+  router.get('/:id/resources', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureClassResourceTable();
+      const visibilities = allowedVisibilities(scope);
+      const result = await pool.query(
+        `
+          SELECT r.*, creator.name AS "createdByName"
+          FROM "ClassResource" r
+          JOIN "User" creator ON creator.id = r."createdById"
+          WHERE r."classId" = $1 AND r.active = true AND r.visibility = ANY($2)
+          ORDER BY r."createdAt" DESC
+        `,
+        [req.params.id, visibilities]
+      );
+      res.json(result.rows);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch class resources', details: error.message });
+    }
+  });
+
+  router.post('/:id/resources', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can create resources.' });
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      const userId = requesterId(req) || String(req.body?.createdById || '').trim();
+      if (!userId) return res.status(400).json({ error: 'requester user is required.' });
+      const title = String(req.body?.title || '').trim();
+      if (!title) return res.status(400).json({ error: 'title is required.' });
+      res.status(201).json(await insertClassResource(req.params.id, req.body, userId));
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to create class resource', details: error.message });
+    }
+  });
+
+  router.post('/:id/resources/upload', upload.single('file'), async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can upload resources.' });
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      const userId = requesterId(req) || String(req.body?.createdById || '').trim();
+      const file = req.file;
+      if (!userId) return res.status(400).json({ error: 'requester user is required.' });
+      if (!file) return res.status(400).json({ error: 'file is required.' });
+
+      const orgResult = await pool.query('SELECT * FROM "Organization" LIMIT 1');
+      const org = orgResult.rows[0] || { name: 'org', id: '1' };
+
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const filename = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}${ext}`;
+      const orgFolderName = org.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_' + String(org.id).split('-')[0];
+      const objectKey = `${orgFolderName}/classes/${req.params.id}/resources/${filename}`;
+      const { url: fileUrl } = await putObject({ pool, key: objectKey, buffer: file.buffer, contentType: file.mimetype });
+
+      const resource = await insertClassResource(
+        req.params.id,
+        { ...req.body, title: String(req.body?.title || '').trim() || file.originalname },
+        userId,
+        fileUrl,
+        fileUrl
+      );
+      res.status(201).json(resource);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to upload class resource', details: error.message });
+    }
+  });
+
+  router.put('/:id/resources/:resourceId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can edit resources.' });
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureClassResourceTable();
+      const { id: classId, resourceId } = req.params;
+      const existing = await pool.query('SELECT * FROM "ClassResource" WHERE id = $1 AND "classId" = $2 LIMIT 1', [resourceId, classId]);
+      const r = existing.rows[0];
+      if (!r) return res.status(404).json({ error: 'Resource not found' });
+      const userId = requesterId(req) || r.updatedById;
+
+      await pool.query(
+        `UPDATE "ClassResource"
+         SET title = $1, description = $2, type = $3, "resourceUrl" = $4, "thumbnailUrl" = $5, visibility = $6, "publishedAt" = $7, active = $8, "updatedById" = $9, "updatedAt" = NOW()
+         WHERE id = $10`,
+        [
+          String(req.body?.title ?? r.title).trim() || r.title,
+          req.body?.description !== undefined ? (String(req.body.description).trim() || null) : r.description,
+          String(req.body?.type ?? r.type).trim() || r.type,
+          req.body?.resourceUrl !== undefined ? (String(req.body.resourceUrl).trim() || null) : r.resourceUrl,
+          req.body?.thumbnailUrl !== undefined ? (String(req.body.thumbnailUrl).trim() || null) : r.thumbnailUrl,
+          String(req.body?.visibility ?? r.visibility).trim() || r.visibility,
+          req.body?.publishedAt !== undefined ? (req.body.publishedAt ? new Date(req.body.publishedAt) : null) : r.publishedAt,
+          req.body?.active !== undefined ? Boolean(req.body.active) : r.active,
+          userId,
+          resourceId
+        ]
+      );
+      const updated = await pool.query('SELECT * FROM "ClassResource" WHERE id = $1', [resourceId]);
+      res.json(updated.rows[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to update class resource', details: error.message });
+    }
+  });
+
+  router.delete('/:id/resources/:resourceId', async (req, res) => {
+    try {
+      if (!(await ensureActive())) return res.status(409).json({ error: 'Classes module is not active.' });
+      const scope = await scopeOf(req);
+      if (!scope?.isStaff) return res.status(403).json({ error: 'Only staff can delete resources.' });
+      if (!(await canAccessClass(scope, req.params.id))) return res.status(404).json({ error: 'Class not found' });
+      await ensureClassResourceTable();
+      const { id: classId, resourceId } = req.params;
+      const userId = requesterId(req);
+      const r = await pool.query(
+        'UPDATE "ClassResource" SET active = false, "updatedById" = COALESCE($1, "updatedById"), "updatedAt" = NOW() WHERE id = $2 AND "classId" = $3',
+        [userId || null, resourceId, classId]
+      );
+      if (!r.rowCount) return res.status(404).json({ error: 'Resource not found' });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to delete class resource', details: error.message });
     }
   });
 

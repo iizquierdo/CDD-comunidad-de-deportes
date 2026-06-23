@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/AppLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { InstallPage } from "./pages/InstallPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MultimediaPage } from "./pages/MultimediaPage";
 import { MultimediaResourcePage } from "./pages/MultimediaResourcePage";
@@ -14,6 +15,7 @@ import { CuadernoReportsPage } from "./pages/CuadernoReportsPage";
 const App = () => {
   return (
     <Routes>
+      <Route path="/install/:orgId" element={<InstallPage />} />
       <Route path="/login" element={<LoginPage />} />
 
       <Route element={<ProtectedRoute />}>

@@ -25,7 +25,8 @@ export const AppLayout = () => {
   const { logout } = useAuth();
   const [branding, setBranding] = useState(() => readBrandingFromStorage());
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
-  const hasCustomLogo = Boolean(branding.logoUrl && !logoLoadFailed);
+  const logoSrc = branding.isologoUrl ?? branding.logoUrl ?? null;
+  const hasCustomLogo = Boolean(logoSrc && !logoLoadFailed);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +39,9 @@ export const AppLayout = () => {
         saveBrandingToStorage(data);
         setBranding({
           appName: data.appName || readBrandingFromStorage().appName,
-          logoUrl: data.logoUrl ?? null
+          logoUrl: data.logoUrl ?? null,
+          isologoUrl: data.isologoUrl ?? null,
+          loginBackgroundUrl: data.loginBackgroundUrl ?? null
         });
         setLogoLoadFailed(false);
       } catch {
@@ -70,18 +73,18 @@ export const AppLayout = () => {
       <header className="fixed top-0 left-0 right-0 z-30 border-b border-slate-100 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-[480px] items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-[var(--primary)]">
-              {hasCustomLogo ? (
-                <img
-                  alt={branding.appName}
-                  className="h-full w-full object-contain"
-                  onError={() => setLogoLoadFailed(true)}
-                  src={branding.logoUrl ?? undefined}
-                />
-              ) : (
+            {hasCustomLogo ? (
+              <img
+                alt={branding.appName}
+                className="h-8 w-8 object-contain"
+                onError={() => setLogoLoadFailed(true)}
+                src={logoSrc ?? undefined}
+              />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--primary)]">
                 <MaterialIcon name="fitness_center" filled className="text-base text-white" />
-              )}
-            </div>
+              </div>
+            )}
             <span className="text-sm font-bold text-slate-900">{branding.appName}</span>
           </div>
 

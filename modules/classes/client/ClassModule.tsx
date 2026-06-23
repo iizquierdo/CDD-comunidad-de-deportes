@@ -46,6 +46,25 @@ interface LevelForm { id?: string; name: string; levelOrder: number }
 interface AvailableStudent { id: string; code: string; firstName: string; lastName: string }
 interface ClassCommunityRow { id: string; name: string; description?: string | null; imageUrl?: string | null; active: boolean; memberCount: number }
 
+interface ResourceItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  type: string;
+  visibility: string;
+  resourceUrl?: string | null;
+}
+
+const RESOURCE_TYPES = ['PEDAGOGICAL_MATERIAL', 'EXERCISE_VIDEO', 'TOOLS', 'WORK_GUIDELINES', 'GENERAL_FILE'];
+const VISIBILITIES = ['ADMIN_ONLY', 'STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
+
+const labelize = (raw: string) =>
+  String(raw || '')
+    .toLowerCase()
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100';
 
 const emptyForm = {
@@ -64,11 +83,17 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
-  const [meta, setMeta] = useState<{ statuses: MetaItem[]; staff: StaffItem[]; disciplines: DisciplineItem[] }>({ statuses: [], staff: [], disciplines: [] });
+  const [meta, setMeta] = useState<{ statuses: MetaItem[]; staff: StaffItem[]; disciplines: DisciplineItem[]; resourceTypes: MetaItem[]; visibilities: MetaItem[] }>({ statuses: [], staff: [], disciplines: [], resourceTypes: [], visibilities: [] });
   const [companies, setCompanies] = useState<CompanyItem[]>([]);
 
   const [selected, setSelected] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'Overview' | 'Levels' | 'Teachers' | 'Schedule' | 'Students' | 'Attendance' | 'Communities'>('Overview');
+  const [activeTab, setActiveTab] = useState<'Overview' | 'Levels' | 'Teachers' | 'Schedule' | 'Students' | 'Attendance' | 'Communities' | 'Resources'>('Overview');
+
+  // Resources tab
+  const [resources, setResources] = useState<ResourceItem[]>([]);
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [resourceForm, setResourceForm] = useState({ title: '', description: '', type: 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
+  const resourceFileRef = useRef<HTMLInputElement>(null);
 
   // Image upload
   const logoFileRef = useRef<HTMLInputElement>(null);
@@ -120,6 +145,8 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
 
   const dayLabel = (d: number) => t(`classes.days.${d}`, { defaultValue: String(d) });
   const teacherName = (id: string) => meta.staff.find((s) => s.id === id)?.name || id;
+  const typeOptions = useMemo(() => (meta.resourceTypes.length ? meta.resourceTypes.map((x) => x.name) : RESOURCE_TYPES), [meta.resourceTypes]);
+  const visibilityOptions = useMemo(() => (meta.visibilities.length ? meta.visibilities.map((x) => x.name) : VISIBILITIES), [meta.visibilities]);
 
   const loadClasses = async () => {
     setLoading(true); setError('');
@@ -137,7 +164,13 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
       const res = await fetch('/api/classes/meta');
       if (res.ok) {
         const data = await res.json();
-        setMeta({ statuses: data.categories?.statuses || [], staff: data.staff || [], disciplines: data.disciplines || [] });
+        setMeta({
+          statuses: data.categories?.statuses || [],
+          staff: data.staff || [],
+          disciplines: data.disciplines || [],
+          resourceTypes: data.categories?.resourceTypes || [],
+          visibilities: data.categories?.visibilities || []
+        });
       }
     } catch { /* defaults */ }
     try {
@@ -162,6 +195,15 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
       const res = await fetch(`/api/classes/${id}/available-students`);
       if (res.ok) setAvailable(await res.json()); else setAvailable([]);
     } catch { setAvailable([]); }
+  };
+
+  const loadClassResources = async (id: string) => {
+    try {
+      const res = await fetch(`/api/classes/${id}/resources`);
+      setResources(res.ok ? await res.json() : []);
+    } catch {
+      setResources([]);
+    }
   };
 
   useEffect(() => { void loadMeta(); }, []);
@@ -202,6 +244,11 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
 
   useEffect(() => {
     if (view === 'details' && activeTab === 'Communities' && selected?.id) void loadClassCommunities(selected.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, activeTab, selected?.id]);
+
+  useEffect(() => {
+    if (view === 'details' && activeTab === 'Resources' && selected?.id) void loadClassResources(selected.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, activeTab, selected?.id]);
 
@@ -385,6 +432,58 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
     await loadDetails(selected.id); await loadAvailable(selected.id);
   };
 
+  const openCreateResource = () => {
+    setResourceForm({ title: '', description: '', type: typeOptions[0] || 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
+    if (resourceFileRef.current) resourceFileRef.current.value = '';
+    setResourceModalOpen(true);
+  };
+
+  const submitResource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected) return;
+    if (!userId) return setError(t('classes.errorAuthRequired'));
+    if (!resourceForm.title.trim()) return;
+    try {
+      const file = resourceFileRef.current?.files?.[0];
+      let res: Response;
+      if (file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('title', resourceForm.title);
+        fd.append('description', resourceForm.description);
+        fd.append('type', resourceForm.type);
+        fd.append('visibility', resourceForm.visibility);
+        fd.append('createdById', userId);
+        res = await fetch(`/api/classes/${selected.id}/resources/upload`, { method: 'POST', body: fd });
+      } else {
+        res = await fetch(`/api/classes/${selected.id}/resources`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...resourceForm, createdById: userId, updatedById: userId })
+        });
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || t('classes.errorSave'));
+      }
+      setResourceModalOpen(false);
+      await loadClassResources(selected.id);
+    } catch (e: any) {
+      setError(e.message || t('classes.errorSave'));
+    }
+  };
+
+  const deleteResource = async (r: ResourceItem) => {
+    if (!selected) return;
+    if (!confirm(t('classes.deleteConfirm'))) return;
+    await fetch(`/api/classes/${selected.id}/resources/${r.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updatedById: userId })
+    });
+    await loadClassResources(selected.id);
+  };
+
   const statusOptions = useMemo(() => (meta.statuses.length ? meta.statuses.map((x) => x.name) : ['ACTIVE', 'INACTIVE', 'ARCHIVED']), [meta.statuses]);
   const selectedDiscipline = useMemo(() => meta.disciplines.find((d) => d.id === form.disciplineId), [meta.disciplines, form.disciplineId]);
   const teacherOptions = useMemo(() => meta.staff, [meta.staff]);
@@ -558,7 +657,8 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
             { id: 'Schedule', label: t('classes.schedule') },
             { id: 'Students', label: t('classes.students') },
             { id: 'Attendance', label: 'Asistencia' },
-            { id: 'Communities', label: 'Comunidades' }
+            { id: 'Communities', label: 'Comunidades' },
+            { id: 'Resources', label: t('classes.resources') }
           ]}
           activeTab={activeTab}
           onTabChange={(id) => setActiveTab(id as typeof activeTab)}
@@ -1066,7 +1166,74 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
               )}
             </div>
           )}
+
+          {activeTab === 'Resources' && selected && (
+            <div className="px-1">
+              <div className="mb-4 flex justify-end">
+                <button type="button" onClick={openCreateResource} className={primaryBtn}>
+                  <i className="fa-solid fa-plus" /> {t('classes.newResource')}
+                </button>
+              </div>
+              {resources.length === 0 ? (
+                <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">{t('classes.noResources')}</p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {resources.map((r) => (
+                    <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{r.title}</p>
+                          <p className="text-xs text-slate-400">{labelize(r.type)} · {labelize(r.visibility)}</p>
+                        </div>
+                        <button type="button" onClick={() => deleteResource(r)} className="h-8 w-8 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500" aria-label={t('classes.delete')}>
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                      {r.description && <p className="mt-2 text-xs text-slate-500">{r.description}</p>}
+                      {r.resourceUrl && (
+                        <a href={r.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-red-500 hover:text-red-600">
+                          <i className="fa-solid fa-up-right-from-square" /> {t('classes.open')}
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {resourceModalOpen && (
+          <Modal title={t('classes.newResource')} onClose={() => setResourceModalOpen(false)}>
+            <form onSubmit={submitResource} className="space-y-4">
+              <Field label={t('classes.resourceTitle')}>
+                <input className={inputClass} value={resourceForm.title} onChange={(e) => setResourceForm({ ...resourceForm, title: e.target.value })} required />
+              </Field>
+              <Field label={t('classes.description2')}>
+                <textarea className={inputClass} rows={2} value={resourceForm.description} onChange={(e) => setResourceForm({ ...resourceForm, description: e.target.value })} />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t('classes.resourceType')}>
+                  <select className={inputClass} value={resourceForm.type} onChange={(e) => setResourceForm({ ...resourceForm, type: e.target.value })}>
+                    {typeOptions.map((x) => <option key={x} value={x}>{labelize(x)}</option>)}
+                  </select>
+                </Field>
+                <Field label={t('classes.resourceVisibility')}>
+                  <select className={inputClass} value={resourceForm.visibility} onChange={(e) => setResourceForm({ ...resourceForm, visibility: e.target.value })}>
+                    {visibilityOptions.map((x) => <option key={x} value={x}>{labelize(x)}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <Field label={t('classes.resourceUrl')}>
+                <input className={inputClass} value={resourceForm.resourceUrl} onChange={(e) => setResourceForm({ ...resourceForm, resourceUrl: e.target.value })} placeholder="https://..." />
+              </Field>
+              <Field label={t('classes.uploadFile')}>
+                <input ref={resourceFileRef} type="file" className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-xs file:font-bold file:uppercase" />
+              </Field>
+              <ModalActions onCancel={() => setResourceModalOpen(false)} cancel={t('classes.cancel')} save={t('classes.save')} />
+            </form>
+          </Modal>
+        )}
 
         {modalOpen && ClassForm()}
       </div>

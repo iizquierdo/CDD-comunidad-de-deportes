@@ -23,8 +23,11 @@ export const LoginPage = () => {
   const [loading, setLoading] = useState(false);
   const [branding, setBranding] = useState(() => readBrandingFromStorage());
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+  const [bgLoadFailed, setBgLoadFailed] = useState(false);
 
-  const hasCustomLogo = Boolean(branding.logoUrl && !logoLoadFailed);
+  const logoSrc = branding.isologoUrl ?? branding.logoUrl ?? null;
+  const hasCustomLogo = Boolean(logoSrc && !logoLoadFailed);
+  const hasBgImage = Boolean(branding.loginBackgroundUrl && !bgLoadFailed);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,9 +41,12 @@ export const LoginPage = () => {
         saveBrandingToStorage(data);
         setBranding({
           appName: data.appName,
-          logoUrl: data.logoUrl ?? null
+          logoUrl: data.logoUrl ?? null,
+          isologoUrl: data.isologoUrl ?? null,
+          loginBackgroundUrl: data.loginBackgroundUrl ?? null
         });
         setLogoLoadFailed(false);
+        setBgLoadFailed(false);
       } catch {
         if (cancelled) return;
       }
@@ -58,7 +64,7 @@ export const LoginPage = () => {
   }, [branding.appName]);
 
   const canSubmit = useMemo(
-    () => !loading && email.trim().length > 0 && password.trim().length >= 8,
+    () => !loading && email.trim().length > 0 && password.trim().length > 0,
     [email, loading, password]
   );
 
@@ -87,45 +93,59 @@ export const LoginPage = () => {
     }
   };
 
-  const autofillDemo = () => {
-    setEmail("tutor.demo@natacion.local");
-    setPassword("Demo1234");
-  };
-
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 py-10">
-      {/* Aurora blobs */}
-      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute -top-40 -right-20 h-80 w-80 rounded-full bg-violet-200/30 blur-3xl" />
-        <div className="absolute -bottom-40 -left-20 h-80 w-80 rounded-full bg-blue-200/25 blur-3xl" />
-        <div className="absolute top-1/2 right-0 h-48 w-48 rounded-full bg-sky-200/20 blur-3xl" />
-      </div>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+      {/* Background: image or primary-color gradient */}
+      {hasBgImage ? (
+        <>
+          <img
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={() => setBgLoadFailed(true)}
+            src={branding.loginBackgroundUrl ?? undefined}
+          />
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
+        </>
+      ) : (
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 90% 55% at 15% 10%, rgba(255,255,255,0.18) 0%, transparent 55%)," +
+              "radial-gradient(ellipse 70% 45% at 85% 95%, rgba(0,0,0,0.28) 0%, transparent 55%)," +
+              "var(--primary)",
+          }}
+        />
+      )}
 
-      <div className="w-full max-w-sm">
+      {/* Content */}
+      <div className="relative z-10 w-full max-w-sm">
         {/* Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
           {hasCustomLogo ? (
-            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
-              <img
-                alt={branding.appName}
-                className="h-full w-full object-contain"
-                onError={() => setLogoLoadFailed(true)}
-                src={branding.logoUrl ?? undefined}
-              />
-            </div>
+            <img
+              alt={branding.appName}
+              className="h-20 w-20 rounded-2xl object-contain drop-shadow-2xl"
+              onError={() => setLogoLoadFailed(true)}
+              src={logoSrc ?? undefined}
+            />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--primary)] shadow-lg">
-              <MaterialIcon name="fitness_center" filled className="text-2xl text-white" />
+            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
+              <MaterialIcon name="pool" filled className="text-4xl text-white" />
             </div>
           )}
-          <h1 className="text-lg font-bold text-slate-900">{branding.appName}</h1>
+          <div className="text-center">
+            <h1 className="text-xl font-bold text-white drop-shadow">{branding.appName}</h1>
+            <p className="mt-1 text-sm font-medium text-white/80">Portal de Familias</p>
+          </div>
         </div>
 
-        {/* Card */}
-        <div className="rounded-3xl bg-white p-6 shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
-          <h2 className="text-xl font-bold text-slate-900">Bienvenido</h2>
+        {/* Card — glassmorphism */}
+        <div className="rounded-3xl bg-white/90 backdrop-blur-xl p-6 shadow-2xl ring-1 ring-white/40">
+          <h2 className="text-xl font-bold text-slate-900">Bienvenido, Familia</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Ingresa tus credenciales para acceder al seguimiento de tu familia.
+            Ingresá tus credenciales para seguir el progreso de tus hijos.
           </p>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -144,7 +164,7 @@ export const LoginPage = () => {
                   className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   id="email"
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="ejemplo@correo.com"
+                  placeholder="familia@ejemplo.com"
                   required
                   type="email"
                   value={email}
@@ -221,14 +241,6 @@ export const LoginPage = () => {
           </p>
         </div>
 
-        {/* Demo chip */}
-        <button
-          className="mt-3 w-full rounded-full border border-slate-200 bg-white/70 py-3 text-sm font-medium text-slate-500 backdrop-blur-sm transition-colors hover:bg-white"
-          onClick={autofillDemo}
-          type="button"
-        >
-          Usar Credenciales DEMO
-        </button>
       </div>
     </div>
   );

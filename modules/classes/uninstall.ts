@@ -18,6 +18,7 @@ export default async function uninstallClassesModule(ctx: UninstallContext) {
   // Only drop class data when explicitly requested. Class tables cascade on
   // their own rows; discipline/student records (other modules) are never touched.
   if (purgeData) {
+    await pool.query('DROP TABLE IF EXISTS "ClassResource" CASCADE');
     await pool.query('DROP TABLE IF EXISTS "ClassStudent" CASCADE');
     await pool.query('DROP TABLE IF EXISTS "ClassSchedule" CASCADE');
     await pool.query('DROP TABLE IF EXISTS "ClassTeacher" CASCADE');

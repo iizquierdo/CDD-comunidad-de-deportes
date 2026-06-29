@@ -7,18 +7,16 @@ interface UninstallContext {
   purgeData?: boolean;
 }
 
-export default async function uninstallAssetsModule(ctx: UninstallContext) {
+export default async function uninstallMessagingModule(ctx: UninstallContext) {
   const { pool, moduleCode, purgeData = false } = ctx;
 
   await pool.query('UPDATE "SystemModule" SET status = $1, "updatedAt" = NOW() WHERE code = $2', ['Inactive', moduleCode]);
-  await removeModuleMenu(pool, 'assets');
+  await removeModuleMenu(pool, 'messaging');
 
   if (!purgeData) return;
 
-  await pool.query('DELETE FROM "AssetCompany"');
-  await pool.query('DELETE FROM "Asset"');
-  await pool.query('DELETE FROM "AssetProductFile"');
-  await pool.query('DELETE FROM "AssetProduct"');
-
-  await pool.query('DELETE FROM "Reference" WHERE module = $1', ['ASSETS']);
+  await pool.query('DELETE FROM "MessageRead"');
+  await pool.query('DELETE FROM "Message"');
+  await pool.query('DELETE FROM "ConversationParticipant"');
+  await pool.query('DELETE FROM "Conversation"');
 }

@@ -5,10 +5,6 @@ import {
   resolveTenantAuthContext,
   resolveRequesterScope,
   getRequesterUserId,
-  seedModuleMenu,
-  ensureSystemModule,
-  grantModulePermission,
-  NATACION_ROLES,
   type RequesterScope
 } from '@sinapsis/module-sdk-server';
 
@@ -22,23 +18,6 @@ const MODULE_CODE = 'MESSAGING';
 export default async function registerMessagingModule({ app, pool }: MessagingModuleContext) {
   const router = express.Router();
 
-  await ensureSystemModule(pool, {
-    code: MODULE_CODE,
-    name: 'Mensajería',
-    description: 'Mensajería entre padres y profesores vinculada a alumnos'
-  });
-
-  await Promise.all([
-    grantModulePermission(pool, { roleName: NATACION_ROLES.TUTOR,      moduleCode: MODULE_CODE, canRead: true, canCreate: true, canWrite: true, canDelete: false }),
-    grantModulePermission(pool, { roleName: NATACION_ROLES.PROFESOR,   moduleCode: MODULE_CODE, canRead: true, canCreate: true, canWrite: true, canDelete: false }),
-    grantModulePermission(pool, { roleName: NATACION_ROLES.ADMIN_SEDE, moduleCode: MODULE_CODE, canRead: true, canCreate: false, canWrite: false, canDelete: false }),
-  ]);
-
-  await seedModuleMenu(pool, {
-    moduleCode: MODULE_CODE,
-    group: { key: 'messaging', label: 'Mensajería', icon: 'fa-comments', sortOrder: 70 },
-    items: [{ label: 'Mensajes', icon: 'fa-envelope', viewKey: 'Messaging', sortOrder: 0 }]
-  });
 
   const ensureActive = async () => {
     const mod = await pool.query('SELECT status FROM "SystemModule" WHERE code = $1 LIMIT 1', [MODULE_CODE]);

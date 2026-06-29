@@ -1,6 +1,13 @@
 import crypto from 'crypto';
 import type { Pool } from 'pg';
-import { ensureCoreReferenceTemplate, propagateReferenceTemplateToAllCompanies } from '@sinapsis/module-sdk-server';
+import {
+  ensureCoreReferenceTemplate,
+  propagateReferenceTemplateToAllCompanies,
+  ensureRole,
+  grantModulePermission,
+  seedModuleMenu,
+  NATACION_ROLES
+} from '@sinapsis/module-sdk-server';
 
 interface InstallContext {
   pool: Pool;
@@ -94,4 +101,18 @@ export default async function installAssetsModule(ctx: InstallContext) {
     reference: 0
   });
   await propagateReferenceTemplateToAllCompanies(pool, 'ASSETS', 'ASSET');
+
+  await ensureRole(pool, NATACION_ROLES.SUPER_ADMIN, 'Acceso total al sistema');
+  await ensureRole(pool, NATACION_ROLES.ADMIN_SEDE, 'Administrador de una sede');
+  await ensureRole(pool, NATACION_ROLES.PROFESOR, 'Profesor / staff tecnico');
+
+  await grantModulePermission(pool, { roleName: NATACION_ROLES.SUPER_ADMIN, moduleCode, canRead: true, canCreate: true, canWrite: true, canDelete: true });
+  await grantModulePermission(pool, { roleName: NATACION_ROLES.ADMIN_SEDE, moduleCode, canRead: true, canCreate: true, canWrite: true, canDelete: true });
+  await grantModulePermission(pool, { roleName: NATACION_ROLES.PROFESOR, moduleCode, canRead: true });
+
+  await seedModuleMenu(pool, {
+    moduleCode,
+    group: { key: 'assets', label: 'Recursos', icon: 'fa-boxes-stacked', sortOrder: 60 },
+    items: [{ label: 'Recursos', icon: 'fa-boxes-stacked', viewKey: 'Assets', sortOrder: 0 }]
+  });
 }

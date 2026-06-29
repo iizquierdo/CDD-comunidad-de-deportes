@@ -14,6 +14,7 @@ import CompanyProfile from './CompanyProfile';
 import MenuManagement from './MenuManagement';
 import { SYSTEM_LANGUAGES } from '../types';
 import { ModuleClientDefinition } from '../modules/module-contract';
+import { assetUrl } from '@/lib/api-base';
 
 interface Company {
     id: string;
@@ -314,7 +315,7 @@ const AppBrandingSection: React.FC = () => {
                                 {uploading === key && <p className="text-xs text-blue-600">Subiendo…</p>}
                                 {branding[key] ? (
                                     <div className="flex items-center gap-2">
-                                        <img src={branding[key]!} alt={label} className="h-12 max-w-[120px] rounded border object-contain p-1" />
+                                        <img src={assetUrl(branding[key])} alt={label} className="h-12 max-w-[120px] rounded border object-contain p-1" />
                                         <button onClick={() => update(key, null)} className="text-xs text-red-500 hover:underline">Quitar</button>
                                     </div>
                                 ) : (
@@ -343,7 +344,7 @@ const AppBrandingSection: React.FC = () => {
                     {uploading === 'backgroundImageUrl' && <p className="mt-1 text-xs text-blue-600">Subiendo…</p>}
                     {branding.backgroundImageUrl ? (
                         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                            <img src={branding.backgroundImageUrl} alt="Fondo" className="h-28 max-w-full rounded border object-cover sm:max-w-[360px]" />
+                            <img src={assetUrl(branding.backgroundImageUrl)} alt="Fondo" className="h-28 max-w-full rounded border object-cover sm:max-w-[360px]" />
                             <button onClick={() => update('backgroundImageUrl', null)} className="text-xs text-red-500 hover:underline">Quitar imagen</button>
                         </div>
                     ) : (

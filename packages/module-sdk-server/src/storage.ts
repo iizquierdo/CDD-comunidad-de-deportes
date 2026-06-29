@@ -82,8 +82,10 @@ export const resolveStoredObjectUrl = (
   storedUrl: string | null | undefined,
   config: StorageConfig
 ): string | null => {
-  const key = extractObjectKey(String(storedUrl || ''));
+  let key = extractObjectKey(String(storedUrl || ''));
   if (!key) return null;
+  const bucket = firstString(config.settings.bucket, config.settings.bucketName, config.settings.AWS_BUCKET);
+  if (bucket && key.startsWith(`${bucket}/`)) key = key.slice(bucket.length + 1);
   return objectUrl(config, key);
 };
 

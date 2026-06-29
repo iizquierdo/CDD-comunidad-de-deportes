@@ -38,6 +38,8 @@ import {
   reserveNextReference,
   putObject,
   getObjectStream,
+  loadStorageConfig,
+  resolveStoredObjectUrl,
   findLatestUserAvatarKey,
   ensureRole,
   NATACION_ROLES,
@@ -1391,6 +1393,18 @@ app.put('/api/organization', async (req, res) => {
 // --- Organization Branding API (tenant) ---
 
 const isLikelyColor = (v: string) => /^#[0-9a-fA-F]{3,8}$|^rgb|^hsl/.test(v.trim());
+const BRANDING_ASSET_FIELDS = ['logoUrl', 'isologoUrl', 'faviconUrl', 'backgroundImageUrl'] as const;
+
+const normalizeBrandingAssetUrls = async (row: Record<string, unknown> | undefined | null): Promise<Record<string, unknown>> => {
+    if (!row) return {};
+    const config = await loadStorageConfig(pool);
+    const normalized = { ...row };
+    for (const key of BRANDING_ASSET_FIELDS) {
+        const value = normalized[key];
+        if (value) normalized[key] = resolveStoredObjectUrl(String(value), config) || value;
+    }
+    return normalized;
+};
 
 app.get('/api/organization/branding', async (req, res) => {
     try {
@@ -1401,7 +1415,7 @@ app.get('/api/organization/branding', async (req, res) => {
             `SELECT id AS "organizationId","appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
             [ctx.organizationId]
         );
-        res.json(result.rows[0] || {});
+        res.json(await normalizeBrandingAssetUrls(result.rows[0]));
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch branding', details: error.message });
     }
@@ -1446,7 +1460,7 @@ app.put('/api/organization/branding', async (req, res) => {
             `SELECT id AS "organizationId","appName","logoUrl","isologoUrl","faviconUrl","primaryColor","secondaryColor","backgroundImageUrl","slogan" FROM "Organization" WHERE id = $1 LIMIT 1`,
             [ctx.organizationId]
         );
-        res.json(result.rows[0] || {});
+        res.json(await normalizeBrandingAssetUrls(result.rows[0]));
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to update branding', details: error.message });
     }

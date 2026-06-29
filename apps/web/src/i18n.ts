@@ -967,7 +967,7 @@ const esTranslations = {
             createAccount: "Crea tu cuenta para comenzar",
             resetHelp: "Usa el email para recibir token/enlace y luego define una nueva contraseña.",
             email: "Email",
-            password: "contraseña",
+            password: "Contraseña",
             firstName: "Nombre",
             lastName: "Apellido",
             organizationName: "Nombre de la organización",

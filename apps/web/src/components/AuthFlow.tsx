@@ -36,8 +36,8 @@ const AuthFlow: React.FC<AuthFlowProps> = ({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const [signInEmail, setSignInEmail] = useState('admin@sinapsis.app');
-  const [signInPassword, setSignInPassword] = useState('Admin1234');
+  const [signInEmail, setSignInEmail] = useState('');
+  const [signInPassword, setSignInPassword] = useState('');
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -206,12 +206,13 @@ const AuthFlow: React.FC<AuthFlowProps> = ({
           <Label htmlFor="signin-email">{t('auth.email')}</Label>
           <Input
             id="signin-email"
+            name="signin-email"
             type="email"
             value={signInEmail}
             onChange={(e) => setSignInEmail(e.target.value)}
             placeholder="Enter your email"
             variant="md"
-            autoComplete="email"
+            autoComplete="off"
           />
         </div>
         <div className="space-y-2">
@@ -221,13 +222,14 @@ const AuthFlow: React.FC<AuthFlowProps> = ({
           <div className="relative">
             <Input
               id="signin-password"
+              name="signin-password"
               type={showPassword ? 'text' : 'password'}
               value={signInPassword}
               onChange={(e) => setSignInPassword(e.target.value)}
               placeholder="********"
               variant="md"
               className="pe-10"
-              autoComplete="current-password"
+              autoComplete="new-password"
             />
             <button
               type="button"

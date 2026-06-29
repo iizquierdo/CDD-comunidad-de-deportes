@@ -51,25 +51,27 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
           <CardTitle className="normal-case text-xl font-semibold">Admin Login</CardTitle>
         </CardHeader>
         <CardContent className="pt-6">
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4" autoComplete="off">
             <div className="space-y-2">
               <Label htmlFor="admin-login-email">Email</Label>
               <Input
                 id="admin-login-email"
+                name="admin-login-email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
-                autoComplete="email"
+                autoComplete="off"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="admin-login-password">Password</Label>
+              <Label htmlFor="admin-login-password">Contraseña</Label>
               <Input
                 id="admin-login-password"
+                name="admin-login-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type="password"
-                autoComplete="current-password"
+                autoComplete="new-password"
               />
             </div>
             {error ? (

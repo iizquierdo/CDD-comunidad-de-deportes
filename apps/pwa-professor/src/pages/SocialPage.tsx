@@ -35,8 +35,9 @@ const isVideoUrl = (v: string) =>
 
 const getMediaAttachment = (post: CommunityPost) => {
   if (post.coverUrl) {
-    if (isImageUrl(post.coverUrl)) return { url: post.coverUrl, kind: "image" as const };
-    if (isVideoUrl(post.coverUrl)) return { url: post.coverUrl, kind: "video" as const };
+    const url = resolveMediaUrl(post.coverUrl) ?? post.coverUrl;
+    if (isImageUrl(post.coverUrl)) return { url, kind: "image" as const };
+    if (isVideoUrl(post.coverUrl)) return { url, kind: "video" as const };
   }
   const att = post.attachments.find(
     (a) =>
@@ -46,8 +47,9 @@ const getMediaAttachment = (post: CommunityPost) => {
       isVideoUrl(a.fileUrl)
   );
   if (!att) return null;
+  const url = resolveMediaUrl(att.fileUrl) ?? att.fileUrl;
   return {
-    url: att.fileUrl,
+    url,
     kind: (att.mimeType?.startsWith("video/") || isVideoUrl(att.fileUrl)
       ? "video"
       : "image") as "image" | "video"
@@ -459,7 +461,7 @@ const PostCard = ({ post, onToggleLike, onDelete, currentUser }: PostCardProps) 
       {(docs.length > 0 || localDocs.length > 0) && (
         <div className="mx-3 mb-2.5 space-y-1.5">
           {docs.map((att, i) => (
-            <a key={i} href={att.fileUrl} target="_blank" rel="noopener noreferrer"
+            <a key={i} href={resolveMediaUrl(att.fileUrl) ?? att.fileUrl} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[12px] font-medium text-slate-700 hover:bg-slate-100">
               <MaterialIcon name="description" className="text-sm text-slate-400" />
               <span className="truncate">{att.fileName}</span>

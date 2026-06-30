@@ -234,19 +234,20 @@ export const resolveRequesterScope = async (pool: PgExec, userId: string): Promi
   const legacyRole = String(row.legacyRole || '').trim();
   const roleName = String(row.roleName || '').trim();
   const legacyLower = legacyRole.toLowerCase();
+  const roleLower = roleName.toLowerCase();
   const isLegacyAdmin = legacyLower === 'administrator' || legacyLower === 'admin';
   const isLegacyAdministrador = legacyLower === NATACION_ROLES.ADMINISTRADOR.toLowerCase();
   const isLegacyAdminSede = legacyLower === NATACION_ROLES.ADMIN_SEDE.toLowerCase();
   const isLegacyProfesor = legacyLower === NATACION_ROLES.PROFESOR.toLowerCase() || legacyLower === 'professor';
   const isLegacyTutor = legacyLower === NATACION_ROLES.TUTOR.toLowerCase();
-  const isSuperAdmin = isLegacyAdmin || roleName === NATACION_ROLES.SUPER_ADMIN;
+  const isSuperAdmin = isLegacyAdmin || roleLower === NATACION_ROLES.SUPER_ADMIN.toLowerCase();
   const isAdminSede =
     isLegacyAdministrador ||
     isLegacyAdminSede ||
-    roleName === NATACION_ROLES.ADMINISTRADOR ||
-    roleName === NATACION_ROLES.ADMIN_SEDE;
-  const isProfesor = isLegacyProfesor || roleName === NATACION_ROLES.PROFESOR;
-  const isTutor = isLegacyTutor || roleName === NATACION_ROLES.TUTOR;
+    roleLower === NATACION_ROLES.ADMINISTRADOR.toLowerCase() ||
+    roleLower === NATACION_ROLES.ADMIN_SEDE.toLowerCase();
+  const isProfesor = isLegacyProfesor || roleLower === NATACION_ROLES.PROFESOR.toLowerCase();
+  const isTutor = isLegacyTutor || roleLower === NATACION_ROLES.TUTOR.toLowerCase();
   const primaryCompanyId = row.companyId ? String(row.companyId) : null;
   const organizationId = row.organizationId ? String(row.organizationId) : null;
   const accessCompanyIds = parseAccessCompanyIds(row.accessCompanyIdsRaw);

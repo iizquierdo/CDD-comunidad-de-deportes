@@ -54,6 +54,38 @@ const firstString = (...values: unknown[]): string => {
 export const normalizeKey = (key: string): string =>
   String(key || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/^storage\//, '');
 
+const stripPrefix = (key: string, prefix: string): string => {
+  const normalizedPrefix = normalizeKey(prefix);
+  if (!normalizedPrefix) return key;
+  return key === normalizedPrefix
+    ? ''
+    : key.startsWith(`${normalizedPrefix}/`)
+      ? key.slice(normalizedPrefix.length + 1)
+      : key;
+};
+
+const stripUrlPathPrefix = (key: string, rawBaseUrl: unknown): string => {
+  const baseUrl = String(rawBaseUrl || '').trim();
+  if (!baseUrl) return key;
+  try {
+    const pathPrefix = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, '');
+    return pathPrefix ? stripPrefix(key, pathPrefix) : key;
+  } catch {
+    return key;
+  }
+};
+
+const normalizeObjectKeyForConfig = (key: string, config: StorageConfig): string => {
+  let normalized = normalizeKey(key);
+  normalized = stripUrlPathPrefix(normalized, config.settings.publicUrl);
+  normalized = stripUrlPathPrefix(normalized, config.settings.endpoint);
+
+  const bucket = firstString(config.settings.bucket, config.settings.bucketName, config.settings.AWS_BUCKET);
+  if (bucket) normalized = stripPrefix(normalized, bucket);
+
+  return normalized;
+};
+
 /** Extract object key from any persisted file URL format. */
 export const extractObjectKey = (storedUrl: string): string | null => {
   const url = String(storedUrl || '').trim();
@@ -84,8 +116,7 @@ export const resolveStoredObjectUrl = (
 ): string | null => {
   let key = extractObjectKey(String(storedUrl || ''));
   if (!key) return null;
-  const bucket = firstString(config.settings.bucket, config.settings.bucketName, config.settings.AWS_BUCKET);
-  if (bucket && key.startsWith(`${bucket}/`)) key = key.slice(bucket.length + 1);
+  key = normalizeObjectKeyForConfig(key, config);
   return objectUrl(config, key);
 };
 
@@ -106,13 +137,18 @@ export const loadStorageConfig = async (pool: Pool): Promise<StorageConfig> => {
     const value = result.rows[0]?.value;
     if (!value || typeof value !== 'object') return DEFAULT_CONFIG;
     const v = value as Record<string, unknown>;
-    const providerRaw = String(v.provider || v.storageProvider || 'Local');
-    const provider = (VALID_PROVIDERS as string[]).includes(providerRaw)
-      ? (providerRaw as StorageProvider)
+    const providerRaw = String(v.provider || v.storageProvider || 'Local').trim();
+    const provider = providerRaw.toLowerCase() === 'railway'
+      ? 'S3'
+      : (VALID_PROVIDERS as string[]).includes(providerRaw)
+        ? (providerRaw as StorageProvider)
       : 'Local';
     const settingsRaw = (v.settings || v.storageSettings || {}) as unknown;
     const settings = settingsRaw && typeof settingsRaw === 'object' ? (settingsRaw as StorageSettings) : {};
-    return { provider, settings };
+    return {
+      provider,
+      settings: providerRaw.toLowerCase() === 'railway' ? { ...settings, flavor: 'railway' } : settings
+    };
   } catch {
     return DEFAULT_CONFIG;
   }
@@ -280,11 +316,12 @@ export const getObjectStream = async (pool: Pool, key: string, config?: StorageC
   if (cfg.provider !== 'S3') return null;
 
   const bucket = requireBucket(cfg.settings);
+  const objectKey = normalizeObjectKeyForConfig(key, cfg);
   const { GetObjectCommand } = await import('@aws-sdk/client-s3');
   const client = await getS3Client(cfg.settings);
   try {
     const out = (await (client as { send: (cmd: unknown) => Promise<any> }).send(
-      new GetObjectCommand({ Bucket: bucket, Key: normalizeKey(key) })
+      new GetObjectCommand({ Bucket: bucket, Key: objectKey })
     )) as { Body?: unknown; ContentType?: string; ContentLength?: number };
     if (!out?.Body) return null;
     return {

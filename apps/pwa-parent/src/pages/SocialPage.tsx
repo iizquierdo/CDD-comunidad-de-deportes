@@ -161,7 +161,12 @@ const PostCard = ({ post, onToggleLike, currentUser }: PostCardProps) => {
   const body = post.content.trim();
   const title = post.title.trim();
   const firstLine = body.split("\n")[0]?.trim() ?? "";
-  const distinctTitle = Boolean(title && title !== body && title !== firstLine);
+  const titleDuplicatesFirstLine = Boolean(
+    title &&
+      firstLine &&
+      (title === body || title === firstLine || firstLine.startsWith(title) || title.startsWith(firstLine))
+  );
+  const distinctTitle = Boolean(title && !titleDuplicatesFirstLine);
 
   const toggleComments = async () => {
     const next = !showComments;

@@ -40,7 +40,7 @@ const demoReports: Record<string, StudentReport[]> = {
       id: "r1", studentId: "s1", authorId: "me", type: "PROGRESS",
       title: "Progreso mensual — Mayo",
       content: "Lucas ha mostrado una mejora notable en el estilo mariposa. Su técnica de respiración es más consistente.",
-      status: "PUBLISHED", visibility: "MEMBERS_ONLY",
+      status: "PUBLISHED", visibility: "TUTORS_ONLY",
       publishedAt: new Date(Date.now() - 604800000).toISOString(),
       createdAt: new Date(Date.now() - 604800000).toISOString(),
       author: { id: "me", firstName: "Prof.", lastName: "Gómez" }
@@ -72,6 +72,7 @@ const emptyReportForm = () => ({
   type: "PROGRESS",
   title: "",
   content: "",
+  visibility: "TUTORS_ONLY",
   status: "PUBLISHED",
   rating: 0,
   ratingTheme: "stars"

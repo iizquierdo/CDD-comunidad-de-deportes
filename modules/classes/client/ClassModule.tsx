@@ -538,7 +538,7 @@ const ClassModule: React.FC<Props> = ({ view, setView, currentUser, companyId, o
   };
 
   const openCreateResource = () => {
-    setResourceForm({ title: '', description: '', type: typeOptions[0] || 'GENERAL_FILE', visibility: 'STAFF_ONLY', resourceUrl: '' });
+    setResourceForm({ title: '', description: '', type: typeOptions[0] || 'GENERAL_FILE', visibility: 'MEMBERS_ONLY', resourceUrl: '' });
     if (resourceFileRef.current) resourceFileRef.current.value = '';
     setResourceModalOpen(true);
   };

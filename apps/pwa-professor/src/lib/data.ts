@@ -426,6 +426,7 @@ export const createReport = async (
     title: string;
     content: string;
     summary?: string;
+    visibility?: string;
     status: string;
     rating?: number;
     ratingTheme?: string;

@@ -481,10 +481,21 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
       const params: any[] = [studentId];
       let extra = '';
       if (scope && scope.isTutor && !scope.isStaff && !scope.isProfesor) {
-        extra = `AND r.status = 'PUBLISHED' AND r.visibility = 'TUTORS_ONLY'`;
+        extra = `AND r.status = 'PUBLISHED'
+                 AND (
+                   r.visibility = 'TUTORS_ONLY'
+                   OR (
+                     r.visibility = 'INTERNAL_STAFF'
+                     AND (
+                       LOWER(COALESCE(a.role, '')) IN ('profesor', 'professor')
+                       OR LOWER(COALESCE(ar.name, '')) = 'profesor'
+                     )
+                   )
+                 )`;
       }
       const reports = await pool.query(
         `SELECT r.*, a.name AS "authorName", COALESCE(a."imageUrl", a.avatar) AS "authorAvatarUrl" FROM "StudentReport" r JOIN "User" a ON a.id = r."authorId"
+         LEFT JOIN "Role" ar ON ar.id = a."roleId"
          WHERE r."studentId" = $1 ${extra} ORDER BY r."createdAt" DESC`,
         params
       );
@@ -506,6 +517,8 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
 
       const id = crypto.randomUUID();
       const status = String(req.body?.status || 'DRAFT').trim();
+      const requestedVisibility = String(req.body?.visibility || '').trim();
+      const visibility = requestedVisibility || (scope.isProfesor && !scope.isStaff ? 'TUTORS_ONLY' : 'INTERNAL_STAFF');
       // Base insert — always safe
       await pool.query(
         `INSERT INTO "StudentReport" (id, "studentId", "authorId", type, title, content, summary, "levelChangeId", visibility, status, "publishedAt", "createdAt", "updatedAt")
@@ -517,7 +530,7 @@ export default function registerStudentsModule({ app, pool }: StudentsModuleCont
           String(req.body?.content || '').trim() || null,
           String(req.body?.summary || '').trim() || null,
           String(req.body?.levelChangeId || '').trim() || null,
-          String(req.body?.visibility || 'INTERNAL_STAFF').trim(),
+          visibility,
           status,
           status === 'PUBLISHED' ? new Date() : (req.body?.publishedAt ? new Date(req.body.publishedAt) : null)
         ]

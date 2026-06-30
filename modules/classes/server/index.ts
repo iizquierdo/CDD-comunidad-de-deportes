@@ -30,7 +30,7 @@ const allowedVisibilities = (scope: RequesterScope | null): string[] => {
   if (!scope) return ['PUBLIC'];
   if (scope.isSuperAdmin || scope.isAdminSede) return ['ADMIN_ONLY', 'STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
   if (scope.isProfesor) return ['STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
-  if (scope.isTutor) return ['MEMBERS_ONLY', 'PUBLIC'];
+  if (scope.isTutor) return ['STAFF_ONLY', 'MEMBERS_ONLY', 'PUBLIC'];
   return ['PUBLIC'];
 };
 
@@ -1001,7 +1001,7 @@ export default function registerClassesModule({ app, pool }: ClassesModuleContex
         resourceUrl ?? (String(body?.resourceUrl || '').trim() || null),
         storageKey ?? (String(body?.storageKey || '').trim() || null),
         String(body?.thumbnailUrl || '').trim() || null,
-        String(body?.visibility || 'STAFF_ONLY').trim() || 'STAFF_ONLY',
+        String(body?.visibility || 'MEMBERS_ONLY').trim() || 'MEMBERS_ONLY',
         body?.publishedAt ? new Date(body.publishedAt) : null,
         body?.active === false ? false : true,
         userId
